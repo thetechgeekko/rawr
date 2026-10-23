@@ -3,7 +3,9 @@
 // pcm_bits 0 = AAC in MP4; 16/24 = PCM in QuickTime MOV (audio records then hold raw PCM).
 // Optional: index_path crash_after — keep a sample index; when crash_after > 0, stop after that
 // many samples without finish() (as if the app died) and then run MovMuxer::recover().
-// samples.bin: repeated [u8 track (0 video, 1 audio)][u8 sync][i64 ptsUs][u32 size][bytes], little-endian.
+// samples.bin: repeated [u8 track (0 video, 1 audio, 2 motion)][u8 sync][i64 ptsUs][u32 size][bytes], little-endian.
+// Motion bytes are one CAMM packet as [u16 type][f32 x][f32 y][f32 z]; consecutive motion records are
+// batched into one writeMotion() call, like the recorder's sensor batches. Any motion record adds the track.
 // tests/mov_muxer.py builds the inputs from ffmpeg output and checks the result with ffprobe.
 #include <fcntl.h>
 #include <unistd.h>
@@ -14,6 +16,7 @@
 #include <fstream>
 #include <iterator>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -63,6 +66,20 @@ int main(int argc, char** argv) {
         muxer.setAudio(audio);
         muxer.setVideo(video);
         const auto samples = slurp(argv[4]);
+        for (size_t scan = 0; scan + 14 <= samples.size();) {
+            uint32_t size = 0;
+            std::memcpy(&size, samples.data() + scan + 10, 4);
+            if (samples[scan] == 2) {
+                muxer.setMotion();
+                break;
+            }
+            scan += 14 + size;
+        }
+        std::vector<MovMuxer::MotionPacket> motion;
+        const auto flushMotion = [&] {
+            if (!motion.empty()) muxer.writeMotion(motion.data(), motion.size());
+            motion.clear();
+        };
         size_t pos = 0;
         long written = 0;
         while (pos + 14 <= samples.size()) {
@@ -80,10 +97,21 @@ int main(int argc, char** argv) {
             std::memcpy(&pts, samples.data() + pos + 2, 8);
             std::memcpy(&size, samples.data() + pos + 10, 4);
             pos += 14;
-            if (track == 0) muxer.writeVideo(samples.data() + pos, size, pts, sync != 0);
-            else muxer.writeAudio(samples.data() + pos, size, pts);
+            if (track == 2) {
+                if (size != 14) throw std::runtime_error("motion record must be 14 bytes");
+                MovMuxer::MotionPacket packet;
+                packet.ptsUs = pts;
+                std::memcpy(&packet.type, samples.data() + pos, 2);
+                std::memcpy(packet.values, samples.data() + pos + 2, 12);
+                motion.push_back(packet);
+            } else {
+                flushMotion();
+                if (track == 0) muxer.writeVideo(samples.data() + pos, size, pts, sync != 0);
+                else muxer.writeAudio(samples.data() + pos, size, pts);
+            }
             pos += size;
         }
+        flushMotion();
         muxer.finish();
     } catch (const std::exception& error) {
         std::fprintf(stderr, "FAIL %s\n", error.what());

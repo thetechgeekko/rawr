@@ -17,6 +17,9 @@ constexpr size_t kFlushBytes = 1 << 20;
 // encoding instead of growing memory without bound.
 constexpr size_t kMaxQueuedBytes = 96u << 20;
 constexpr uint32_t kMovieTimescale = 1000;
+// 10 us ticks: fine against a 2.5-5 ms IMU period, and the 32-bit mdhd duration
+// still covers about 11.9 hours.
+constexpr uint32_t kMotionTimescale = 100'000;
 
 void put8(Bytes& out, uint32_t v) { out.push_back(static_cast<uint8_t>(v)); }
 void put16(Bytes& out, uint32_t v) {
@@ -350,7 +353,9 @@ Bytes co64(const std::vector<uint64_t>& offsets) {
 
 // Sample index: "RMX1" then records [u8 type][u32 length][payload], little-endian.
 namespace {
-constexpr uint8_t kIndexHeader = 0, kIndexVideo = 1, kIndexAudio = 2, kIndexVideoSample = 3, kIndexAudioSample = 4;
+constexpr uint8_t kIndexHeader = 0, kIndexVideo = 1, kIndexAudio = 2, kIndexVideoSample = 3, kIndexAudioSample = 4,
+                  kIndexMotion = 5, kIndexMotionChunk = 6;
+constexpr uint32_t kMotionIndexVersion = 1;
 
 void le(Bytes& out, uint64_t v, int bytes) {
     for (int i = 0; i < bytes; ++i) out.push_back(static_cast<uint8_t>(v >> (8 * i)));
@@ -452,6 +457,15 @@ void MovMuxer::setAudio(const Audio& audio) {
     indexRecord(kIndexAudio, payload);
 }
 
+void MovMuxer::setMotion() {
+    if (motion_.present) throw std::logic_error("motion track already set");
+    motion_.present = true;
+    motion_.timescale = kMotionTimescale;
+    Bytes payload;
+    le(payload, kMotionIndexVersion, 4);
+    indexRecord(kIndexMotion, payload);
+}
+
 void MovMuxer::write(const uint8_t* data, size_t size) {
     buffer_.insert(buffer_.end(), data, data + size);
     position_ += size;
@@ -547,6 +561,48 @@ void MovMuxer::writeAudio(const uint8_t* data, size_t size, int64_t ptsUs) {
     write(data, size);
     noteAudio(offset, static_cast<uint32_t>(size), ptsUs);
     flushIfDue(false);
+}
+
+size_t MovMuxer::writeMotion(const MotionPacket* packets, size_t count) {
+    if (!motion_.present || finished_) throw std::logic_error("motion track not writable");
+    if (count == 0) return 0;
+    throwIfWriteFailed();
+    const uint64_t offset = position_;
+    std::vector<int64_t> kept;
+    kept.reserve(count);
+    uint8_t packet[kCammPacketBytes];
+    for (size_t i = 0; i < count; ++i) {
+        const MotionPacket& p = packets[i];
+        if (p.ptsUs < 0 || p.ptsUs < lastMotionPtsUs_) continue;
+        if (p.type != kCammGyro && p.type != kCammAccelerometer) continue;
+        // CAMM payloads are little-endian (unlike the big-endian box structure).
+        packet[0] = 0;
+        packet[1] = 0;
+        packet[2] = static_cast<uint8_t>(p.type);
+        packet[3] = static_cast<uint8_t>(p.type >> 8);
+        for (int axis = 0; axis < 3; ++axis) {
+            uint32_t bits = 0;
+            std::memcpy(&bits, &p.values[axis], sizeof(bits));
+            for (int b = 0; b < 4; ++b) packet[4 + axis * 4 + b] = static_cast<uint8_t>(bits >> (8 * b));
+        }
+        write(packet, sizeof(packet));
+        kept.push_back(p.ptsUs);
+        lastMotionPtsUs_ = p.ptsUs;
+    }
+    if (kept.empty()) return 0;
+    noteMotion(offset, kept);
+    flushIfDue(false);
+    return kept.size();
+}
+
+void MovMuxer::noteMotion(uint64_t offset, const std::vector<int64_t>& ptsUs) {
+    motion_.chunks.push_back({offset, static_cast<uint32_t>(ptsUs.size())});
+    for (int64_t pts : ptsUs) motion_.ptsTicks.push_back(ticks(pts, motion_.timescale));
+    Bytes payload;
+    le(payload, offset, 8);
+    le(payload, ptsUs.size(), 4);
+    for (int64_t pts : ptsUs) le(payload, static_cast<uint64_t>(pts), 8);
+    indexRecord(kIndexMotionChunk, payload);
 }
 
 void MovMuxer::noteVideo(uint64_t offset, uint32_t size, int64_t ptsUs, bool sync) {
@@ -646,6 +702,18 @@ void MovMuxer::recover(int fd, int indexFd) {
                 muxer->noteAudio(offset, size, ptsUs);
             }
             end = std::max(end, offset + size);
+        } else if (type == kIndexMotion && length >= 4) {
+            if (!muxer->motion_.present) muxer->setMotion();
+        } else if (type == kIndexMotionChunk && length >= 12) {
+            if (!muxer->motion_.present) throw std::runtime_error("motion chunk before config");
+            const uint64_t offset = readLe(p, 8);
+            const auto count = static_cast<size_t>(readLe(p + 8, 4));
+            if (count == 0 || 12 + count * 8 > length) throw std::runtime_error("truncated motion chunk");
+            std::vector<int64_t> pts(count);
+            for (size_t i = 0; i < count; ++i) pts[i] = static_cast<int64_t>(readLe(p + 12 + 8 * i, 8));
+            muxer->noteMotion(offset, pts);
+            muxer->lastMotionPtsUs_ = pts.back();
+            end = std::max<uint64_t>(end, offset + count * kCammPacketBytes);
         }
     }
     if (!muxer) throw std::runtime_error("sample index missing header");
@@ -826,9 +894,61 @@ std::vector<uint8_t> MovMuxer::audioTrak(uint32_t movieTimescale) const {
                                container("minf", fullBox("smhd", 0, 0, smhd), dinf(), box("stbl", stbl))));
 }
 
+std::vector<uint8_t> MovMuxer::motionTrak(uint32_t movieTimescale) const {
+    // One 16-byte CAMM packet per sample. Decode time follows PTS but stays strictly
+    // increasing: packets that share a tick (gyro and accelerometer from one IMU read)
+    // get one-tick durations, and later samples catch up to their PTS, so the
+    // offset never accumulates.
+    const auto& pts = motion_.ptsTicks;
+    const size_t n = pts.size();
+    std::vector<int64_t> deltas(n);
+    int64_t dts = pts.front();
+    for (size_t i = 0; i < n; ++i) {
+        const int64_t next = i + 1 < n ? std::max(dts + 1, pts[i + 1]) : dts + std::max<int64_t>(1, i > 0 ? deltas[i - 1] : 1);
+        deltas[i] = next - dts;
+        dts = next;
+    }
+    uint64_t mediaDuration = 0;
+    for (int64_t d : deltas) mediaDuration += static_cast<uint64_t>(d);
+    const uint64_t emptyMovie =
+        rescale(static_cast<uint64_t>(std::max<int64_t>(0, pts.front())), motion_.timescale, movieTimescale);
+    const uint64_t durationMovie = rescale(mediaDuration, motion_.timescale, movieTimescale);
+
+    // CameraMotionMetadataSampleEntry: a plain SampleEntry with no extra fields.
+    Bytes entry;
+    zeros(entry, 6);
+    put16(entry, 1);  // data_reference_index
+    Bytes stsd;
+    put32(stsd, 1);
+    append(stsd, box("camm", entry));
+
+    Bytes stsz;
+    put32(stsz, kCammPacketBytes);  // every sample is one fixed-size packet
+    put32(stsz, static_cast<uint32_t>(n));
+    std::vector<uint32_t> perChunk;
+    std::vector<uint64_t> chunkOffsets;
+    for (const auto& chunk : motion_.chunks) {
+        perChunk.push_back(chunk.samples);
+        chunkOffsets.push_back(chunk.offset);
+    }
+    Bytes stbl = fullBox("stsd", 0, 0, stsd);
+    append(stbl, runs("stts", deltas));
+    append(stbl, stsc(perChunk));
+    append(stbl, fullBox("stsz", 0, 0, stsz));
+    append(stbl, co64(chunkOffsets));
+
+    const bool quickTime = brand_ == Brand::QuickTime;
+    return container("trak", tkhd(3, emptyMovie + durationMovie, false, 0, 0, 0), edts(emptyMovie, durationMovie, 0),
+                     container("mdia", mdhd(motion_.timescale, mediaDuration),
+                               hdlr("meta", "CameraMetadataMotionHandler", quickTime),
+                               container("minf", fullBox("nmhd", 0, 0, {}), dinf(), box("stbl", stbl))));
+}
+
 std::vector<uint8_t> MovMuxer::moov() const {
     const Bytes video = videoTrak(kMovieTimescale);
     const Bytes audio = audioTrak(kMovieTimescale);
+    const bool motion = motion_.present && !motion_.ptsTicks.empty();
+    const Bytes motionTrack = motion ? motionTrak(kMovieTimescale) : Bytes{};
     // tkhd duration sits at a fixed offset: trak(8) + tkhd header(12) + 4 + 4 + 4 + 4.
     const auto trackDuration = [](const Bytes& trak) {
         const uint8_t* p = trak.data() + 8 + 12 + 16;
@@ -838,14 +958,16 @@ std::vector<uint8_t> MovMuxer::moov() const {
     put32(mvhd, 0);
     put32(mvhd, 0);
     put32(mvhd, kMovieTimescale);
-    put32(mvhd, std::max(trackDuration(video), trackDuration(audio)));
+    uint32_t duration = std::max(trackDuration(video), trackDuration(audio));
+    if (motion) duration = std::max(duration, trackDuration(motionTrack));
+    put32(mvhd, duration);
     put32(mvhd, 0x00010000);
     put16(mvhd, 0x0100);
     zeros(mvhd, 10);
     putMatrix(mvhd, 0);
     zeros(mvhd, 24);
-    put32(mvhd, 3);
-    return container("moov", fullBox("mvhd", 0, 0, mvhd), video, audio);
+    put32(mvhd, motion ? 4 : 3);  // next_track_ID
+    return container("moov", fullBox("mvhd", 0, 0, mvhd), video, audio, motionTrack);
 }
 
 void MovMuxer::finish() {

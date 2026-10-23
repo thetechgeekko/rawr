@@ -169,6 +169,7 @@ void NativeAvRecorder::start() {
         videoThread_ = std::thread([this] { drainVideo(); });
         audioInput_->setSink({[this](const AudioInput::Block& block) { onAudioBlock(block); },
                               [this](const std::string& error) { setFailure(error); }});
+        if (settings_.motion) startMotion();
     } catch (...) {
         audioRunning_.store(false);
         stopRequested_.store(true);
@@ -177,6 +178,79 @@ void NativeAvRecorder::start() {
         cleanup();
         throw;
     }
+}
+
+// Motion is best effort: a missing or failing gyroscope never fails the recording.
+void NativeAvRecorder::startMotion() noexcept {
+    try {
+        {
+            std::lock_guard<std::mutex> lock(muxerMutex_);
+            muxer_->setMotion();
+            motionWritable_ = true;
+        }
+        MotionInput::Config config;
+        config.packageName = settings_.packageName;
+        motionInput_ = std::make_unique<MotionInput>(
+            config, [this](const std::vector<MotionSample>& samples) { onMotionSamples(samples); });
+        const auto stats = motionInput_->stats();
+        std::lock_guard<std::mutex> lock(statsMutex_);
+        motionStatus_ = "recording";
+        motionSensor_ = stats.gyroName;
+        motionPeriodUs_ = stats.gyroPeriodUs;
+    } catch (const std::exception& error) {
+        {
+            std::lock_guard<std::mutex> lock(muxerMutex_);
+            motionWritable_ = false;  // An empty motion track is left out of the file.
+        }
+        std::lock_guard<std::mutex> lock(statsMutex_);
+        motionStatus_ = std::string("unavailable: ") + error.what();
+        __android_log_print(ANDROID_LOG_WARN, kTag, "MOTION_UNAVAILABLE %s", error.what());
+    }
+}
+
+void NativeAvRecorder::onMotionSamples(const std::vector<MotionSample>& samples) noexcept {
+    std::vector<MovMuxer::MotionPacket> packets;
+    packets.reserve(samples.size());
+    uint64_t gyro = 0, accelerometer = 0;
+    int64_t firstGyro = -1, lastGyro = -1;
+    for (const MotionSample& sample : samples) {
+        MovMuxer::MotionPacket packet;
+        // Same origin as the A/V samples: CLOCK_BOOTTIME at recording start.
+        packet.ptsUs = sample.bootNs / 1'000 - originBootUs_;
+        packet.type = sample.type;
+        const auto camera = deviceToCameraAxes(settings_.cameraMount, sample.device);
+        std::copy(camera.begin(), camera.end(), packet.values);
+        packets.push_back(packet);
+        if (sample.type == MovMuxer::kCammGyro) {
+            ++gyro;
+            if (firstGyro < 0) firstGyro = sample.bootNs;
+            lastGyro = sample.bootNs;
+        } else {
+            ++accelerometer;
+        }
+    }
+    size_t kept = 0;
+    std::string error;
+    {
+        std::lock_guard<std::mutex> lock(muxerMutex_);
+        if (!motionWritable_ || !muxer_) return;
+        try {
+            kept = muxer_->writeMotion(packets.data(), packets.size());
+        } catch (const std::exception& e) {
+            motionWritable_ = false;
+            error = e.what();
+        }
+    }
+    std::lock_guard<std::mutex> lock(statsMutex_);
+    if (!error.empty()) {
+        motionStatus_ = "failed: " + error;
+        return;
+    }
+    motionGyroPackets_ += gyro;
+    motionAccelerometerPackets_ += accelerometer;
+    motionDropped_ += packets.size() - kept;
+    if (firstGyroBootNs_ < 0) firstGyroBootNs_ = firstGyro;
+    if (lastGyro >= 0) lastGyroBootNs_ = lastGyro;
 }
 
 void NativeAvRecorder::setFailure(const std::string& message) noexcept {
@@ -526,6 +600,12 @@ bool NativeAvRecorder::stop() noexcept {
         if (status != AMEDIA_OK) setFailure("signal HEVC EOS failed: " + std::to_string(status));
     }
     if (videoThread_.joinable()) videoThread_.join();
+    // Stops the sensors and flushes their held samples into the muxer before moov is written.
+    motionInput_.reset();
+    {
+        std::lock_guard<std::mutex> lock(muxerMutex_);
+        motionWritable_ = false;
+    }
     bool finalized = false;
     {
         std::lock_guard<std::mutex> lock(muxerMutex_);
@@ -565,6 +645,7 @@ void NativeAvRecorder::cleanup() noexcept {
         audioInput_.reset();
     }
     if (videoThread_.joinable()) videoThread_.join();
+    motionInput_.reset();
     if (audioCodec_) {
         (void)AMediaCodec_stop(audioCodec_);
         (void)AMediaCodec_delete(audioCodec_);
@@ -651,7 +732,18 @@ std::string NativeAvRecorder::statsJson() const {
            ",\"firstAudioPtsUs\":" + std::to_string(firstAudioPtsUs_) +
            ",\"lastAudioPtsUs\":" + std::to_string(lastAudioPtsUs_) +
            ",\"audioRmsDbfs\":" + std::to_string(audioRmsDbfs) + ",\"audioPeak\":" + std::to_string(audioPeak_) +
-           ",\"audioXruns\":" + std::to_string(audioXruns_) + ",\"metadata\":\"" + escaped(metadataStatus_) +
+           ",\"audioXruns\":" + std::to_string(audioXruns_) +
+           ",\"motion\":\"" + escaped(motionStatus_) + "\",\"motionSensor\":\"" + escaped(motionSensor_) +
+           "\",\"motionPeriodUs\":" + std::to_string(motionPeriodUs_) +
+           ",\"motionGyroPackets\":" + std::to_string(motionGyroPackets_) +
+           ",\"motionAccelerometerPackets\":" + std::to_string(motionAccelerometerPackets_) +
+           ",\"motionDropped\":" + std::to_string(motionDropped_) + ",\"motionGyroHz\":" +
+           std::to_string(motionGyroPackets_ > 1 && lastGyroBootNs_ > firstGyroBootNs_
+                              ? (motionGyroPackets_ - 1) * 1e9 / static_cast<double>(lastGyroBootNs_ - firstGyroBootNs_)
+                              : 0.0) +
+           ",\"cameraMountDegrees\":" + std::to_string(settings_.cameraMount.sensorOrientationDegrees) +
+           ",\"cameraFrontFacing\":" + (settings_.cameraMount.frontFacing ? "true" : "false") +
+           ",\"metadata\":\"" + escaped(metadataStatus_) +
            "\",\"failure\":\"" + escaped(failure_) + "\"}";
 }
 

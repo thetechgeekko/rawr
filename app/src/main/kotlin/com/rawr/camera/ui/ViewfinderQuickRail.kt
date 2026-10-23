@@ -42,7 +42,7 @@ private fun Modifier.railRank(rank: Int): Modifier = this.then(RailRank(rank))
 
 /**
  * Right-edge rail above the compact strips, two vertical levels. Level 1 is
- * MTR / AE / HL (MTR only with Rawr AE). Tapping HL swaps the upper chips for
+ * OIS / MTR / AE / HL (OIS only in video, MTR only with Rawr AE). Tapping HL swaps the upper chips for
  * HL's own levels, MODE / THR / CMP (THR and CMP only for Opposed), and HL
  * becomes BACK. HL stays at the bottom either way so it never moves. Under
  * height pressure (scopes) chips drop by rank, top-most levels first.
@@ -103,6 +103,19 @@ internal fun ViewfinderQuickRail(
                 width = chipWidth
             ) { onEvent(CaptureQuickEvent.SetHighlightMode(nextMode)) }
         } else {
+            if (quick.video) {
+                RailChip(
+                    value = if (quick.oisEnabled) "ON" else "OFF",
+                    label = "OIS",
+                    active = quick.oisEnabled,
+                    enabled = enabled,
+                    description = "Optical stabilization ${if (quick.oisEnabled) "on" else "off"}. " +
+                        "Turn it off for gyro stabilization in post. Tap to switch.",
+                    tag = CaptureTestTags.RAIL_OIS,
+                    modifier = Modifier.railRank(3),
+                    width = chipWidth
+                ) { onEvent(CaptureQuickEvent.ToggleOis) }
+            }
             if (quick.rawrAeEnabled) {
                 val next = RawrMetering.entries[(quick.metering.ordinal + 1) % RawrMetering.entries.size]
                 RailChip(

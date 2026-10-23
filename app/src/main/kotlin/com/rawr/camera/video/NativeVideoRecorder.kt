@@ -119,7 +119,9 @@ class NativeVideoRecorder(private val context: Context, private val preview: Raw
                         val renderProfileId: Int = 0,
                         val logProfile: com.rawr.camera.settings.model.VideoLogProfile? = null,
                         val timestampPolicy: VideoTimestampPolicy = VideoTimestampPolicy.REALTIME,
-                        val saveLocationId: String = "storage.dcim_camera") {
+                        val saveLocationId: String = "storage.dcim_camera",
+                        /** Gyroscope + accelerometer as a CAMM track (see [VideoEncoderConfig.embedGyro]). */
+                        val embedGyro: Boolean = false) {
         /** Rec.709 and AgX (video) write BT.709; other display profiles write sRGB. */
         val rec709: Boolean get() = renderProfileId == com.rawr.camera.settings.model.ColorRenderProfile.Rec709.nativeId ||
             renderProfileId == com.rawr.camera.settings.model.ColorRenderProfile.AGX_REC709_NATIVE_ID
@@ -161,6 +163,12 @@ class NativeVideoRecorder(private val context: Context, private val preview: Raw
         settings = request
         val rotation = preview.videoRotationDegrees(request.deviceRotationDegrees)
         check(rotation >= 0) { "Camera orientation is not ready for recording" }
+        // Motion axes follow the sensor mount. Posture 0 yields the mount itself; the
+        // posture sign tells front (rotation follows the device) from back (opposes it).
+        val sensorMount = preview.videoRotationDegrees(0)
+        val frontFacing = sensorMount >= 0 &&
+            ((preview.videoRotationDegrees(90) - sensorMount) % 360 + 360) % 360 == 90
+        val embedGyro = request.embedGyro && sensorMount >= 0
         val capturedAt = System.currentTimeMillis()
         val displayName = CaptureFileNames.baseName(capturedAt) + if (request.audioPcmBits > 0) ".mov" else ".mp4"
         uri = null
@@ -184,7 +192,8 @@ class NativeVideoRecorder(private val context: Context, private val preview: Raw
                 request.audio.gainDb.toFloat(), request.audio.lowCutHz, request.audioPcmBits, request.bitDepth,
                 request.timestampPolicy.nativeId, Build.MANUFACTURER.orEmpty(), Build.MODEL.orEmpty(),
                 "RAWR ${BuildConfig.VERSION_NAME}", request.renderProfile,
-                metadataGamut, metadataTransfer, request.logProfile != null, requireNotNull(index).path)
+                metadataGamut, metadataTransfer, request.logProfile != null, requireNotNull(index).path,
+                embedGyro, maxOf(0, sensorMount), frontFacing, context.packageName)
             check(handle != 0L) { "Native recorder did not start" }
             surface = engine.nativeSurface(handle)
             check(preview.setVideoSurface(surface, request.width, request.height, request.bitDepth)) {
@@ -208,6 +217,7 @@ class NativeVideoRecorder(private val context: Context, private val preview: Raw
                 .put("gamut", request.logProfile?.gamut?.name ?: "SRgbRec709")
                 .put("transfer", request.logProfile?.transfer?.name ?: if (request.rec709) "Rec709" else "SRgb")
                 .put("timestampPolicy", request.timestampPolicy.name)
+                .put("embedGyro", embedGyro).put("sensorMountDegrees", sensorMount).put("frontFacing", frontFacing)
                 .put("metadataGamut", metadataGamut).put("metadataTransfer", metadataTransfer)
                 .put("processing", preview.videoImageSettingsSnapshot()?.toJson()))
         } catch (error: Throwable) {

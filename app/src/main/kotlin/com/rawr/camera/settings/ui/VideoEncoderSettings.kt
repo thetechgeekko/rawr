@@ -138,5 +138,15 @@ internal fun VideoEncoderSettings(state: SettingsUiState, dispatch: SettingsDisp
                 }
             }
         }
+        SettingsGroup(
+            title = "Motion",
+            description = "Records the gyroscope and accelerometer into the video as a CAMM track, for gyro stabilization in Gyroflow and similar tools. For best results turn OIS off while recording."
+        ) {
+            SettingsSwitchRow(
+                title = "Embed gyro data",
+                checked = encoder.embedGyro,
+                testTag = SettingsTestTags.row("VideoEncoder", "embed_gyro")
+            ) { set(encoder.copy(embedGyro = it)) }
+        }
     }
 }

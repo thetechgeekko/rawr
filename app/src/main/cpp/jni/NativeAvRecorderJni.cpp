@@ -37,7 +37,8 @@ extern "C" JNIEXPORT jlong JNICALL Java_com_rawr_camera_video_NativeAvEngine_nat
     JNIEnv* env, jobject, jint fd, jint width, jint height, jint fps, jint bitrate, jint intraFrames,
     jint rotationDegrees, jint bitrateMode, jint maxBFrames, jint audioChannels, jint audioBitrate, jint audioPreset,
     jint audioDeviceId, jfloat audioGainDb, jint audioLowCutHz, jint audioPcmBits, jint bitDepth,
-    jint timestampPolicy, jstring deviceMake, jstring deviceModel, jstring software, jstring renderProfile, jstring gamut, jstring transfer, jboolean log, jstring indexPath) {
+    jint timestampPolicy, jstring deviceMake, jstring deviceModel, jstring software, jstring renderProfile, jstring gamut, jstring transfer, jboolean log, jstring indexPath,
+    jboolean motion, jint sensorOrientationDegrees, jboolean frontFacing, jstring packageName) {
     bool ownsFd = false;
     try {
         NativeAvRecorder::Settings settings{};
@@ -66,6 +67,10 @@ extern "C" JNIEXPORT jlong JNICALL Java_com_rawr_camera_video_NativeAvEngine_nat
         settings.log = log;
         settings.indexPath = javaString(env, indexPath);
         settings.timestampPolicy = static_cast<NativeAvRecorder::TimestampPolicy>(timestampPolicy);
+        settings.motion = motion;
+        settings.cameraMount.sensorOrientationDegrees = sensorOrientationDegrees;
+        settings.cameraMount.frontFacing = frontFacing;
+        settings.packageName = javaString(env, packageName);
         auto instance = std::make_unique<NativeAvRecorder>(fd, settings);
         ownsFd = true;
         instance->start();

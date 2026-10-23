@@ -250,6 +250,7 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
             val video = c.isVideo
             when (event) {
                 CaptureQuickEvent.ToggleRawrAe -> c.copy(rawrAe = c.rawrAe.copy(enabled = !c.rawrAe.enabled))
+                CaptureQuickEvent.ToggleOis -> c.copy(oisEnabledPreference = !c.oisEnabledPreference)
                 is CaptureQuickEvent.SetMetering -> c.copy(rawrAe = c.rawrAe.copy(metering = event.metering))
                 is CaptureQuickEvent.SetHighlightMode -> {
                     val enabled = event.mode != HighlightQuickMode.Off

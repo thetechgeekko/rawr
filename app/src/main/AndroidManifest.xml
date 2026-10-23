@@ -3,6 +3,8 @@
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- Gyroscope above 200 Hz for the video motion (CAMM) track. Normal permission. -->
+    <uses-permission android:name="android.permission.HIGH_SAMPLING_RATE_SENSORS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROCESSING" />
@@ -13,6 +15,7 @@
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
     <uses-permission android:name="android.permission.READ_MEDIA_VISUAL_USER_SELECTED" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <uses-feature android:name="android.hardware.sensor.gyroscope" android:required="false" />
     <uses-feature android:name="android.hardware.camera.raw" android:required="true" />
     <uses-feature android:name="android.hardware.vulkan.level" android:version="1" android:required="true" />
     <!-- FilePicker: list GET_CONTENT handlers for the fallback picker list (photo picker excluded). -->

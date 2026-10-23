@@ -15,6 +15,8 @@
 #include "diagnostics/timing/RecentPeak.h"
 #include "video/AudioInput.h"
 #include "video/HevcFrameType.h"
+#include "video/MotionAxes.h"
+#include "video/MotionInput.h"
 #include "video/MovMuxer.h"
 
 namespace rawrcam::video {
@@ -62,6 +64,12 @@ public:
         std::string indexPath;
         bool log = false;
         TimestampPolicy timestampPolicy = TimestampPolicy::PreserveRealtime;
+        // Gyroscope + accelerometer as a CAMM track, for gyro stabilization in Gyroflow
+        // and similar tools. A device without a gyroscope records without it.
+        bool motion = false;
+        CameraMount cameraMount{};
+        // Context.getPackageName(), for the sensor service.
+        std::string packageName;
     };
 
     NativeAvRecorder(int outputFd, Settings settings);
@@ -80,6 +88,8 @@ private:
     void configureAudio();
     void drainVideo() noexcept;
     void onAudioBlock(const AudioInput::Block& block);
+    void startMotion() noexcept;
+    void onMotionSamples(const std::vector<MotionSample>& samples) noexcept;
     void finishAudio() noexcept;
     void drainAudio(bool untilEos);
     void setFormat(Track track, AMediaFormat* format);
@@ -106,6 +116,8 @@ private:
     // Next audio PTS after the last queued block; the AAC EOS timestamp.
     int64_t audioEndUs_ = 0;
     std::unique_ptr<MovMuxer> muxer_;
+    // Destroyed before muxer_ finishes: its destructor delivers the last samples.
+    std::unique_ptr<MotionInput> motionInput_;
     std::thread videoThread_;
     std::atomic<bool> audioRunning_{false};
     std::atomic<bool> stopRequested_{false};
@@ -137,6 +149,16 @@ private:
     long double audioSumSquares_ = 0;
     int16_t audioPeak_ = 0;
     int32_t audioXruns_ = 0;
+    // Motion track, guarded by statsMutex_ (motionWritable_ by muxerMutex_).
+    std::string motionStatus_ = "off";
+    std::string motionSensor_;
+    int32_t motionPeriodUs_ = 0;
+    uint64_t motionGyroPackets_ = 0;
+    uint64_t motionAccelerometerPackets_ = 0;
+    uint64_t motionDropped_ = 0;
+    int64_t firstGyroBootNs_ = -1;
+    int64_t lastGyroBootNs_ = -1;
+    bool motionWritable_ = false;
 };
 
 }  // namespace rawrcam::video
