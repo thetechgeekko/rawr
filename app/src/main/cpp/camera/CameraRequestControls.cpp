@@ -261,6 +261,11 @@ CameraControlApplyResult applyCameraControlState(ACaptureRequest* request, const
                             ? ACAMERA_LENS_OPTICAL_STABILIZATION_MODE_ON
                             : ACAMERA_LENS_OPTICAL_STABILIZATION_MODE_OFF;
     (void)ACaptureRequest_setEntry_u8(request, ACAMERA_LENS_OPTICAL_STABILIZATION_MODE, 1, &ois);
+    // Electronic stabilization is never wanted: RAW output is not stabilized by the HAL,
+    // and a HAL that crops or shifts anyway would break gyro stabilization in post.
+    // OFF is always a supported mode.
+    const uint8_t eis = ACAMERA_CONTROL_VIDEO_STABILIZATION_MODE_OFF;
+    (void)ACaptureRequest_setEntry_u8(request, ACAMERA_CONTROL_VIDEO_STABILIZATION_MODE, 1, &eis);
 
     if ((state.focusMode == FocusControlMode::Manual) && state.capabilities.manualFocusSupported) {
         const float diopters = requestedFocusDiopters(state);

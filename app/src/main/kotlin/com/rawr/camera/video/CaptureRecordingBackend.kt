@@ -73,7 +73,8 @@ internal class CaptureRecordingBackend(
                     bitDepth = bitDepth,
                     renderProfile = imageSettings.activeProfileLabel(),
                     logProfile = imageSettings.videoLogProfile.takeIf { log },
-                    renderProfileId = imageSettings.effectiveRenderProfileId()))
+                    renderProfileId = imageSettings.effectiveRenderProfileId(),
+                    embedGyro = encoder.embedGyro))
                 recorder
             } catch (e: Exception) {
                 runCatching { recorder.close() }

@@ -9,6 +9,7 @@ import com.rawr.camera.settings.model.RawrMetering
  */
 sealed interface CaptureQuickEvent {
     data object ToggleRawrAe : CaptureQuickEvent
+    data object ToggleOis : CaptureQuickEvent
     data class SetMetering(val metering: RawrMetering) : CaptureQuickEvent
     data class SetHighlightMode(val mode: HighlightQuickMode) : CaptureQuickEvent
     data class SetHighlightThreshold(val value: Float) : CaptureQuickEvent

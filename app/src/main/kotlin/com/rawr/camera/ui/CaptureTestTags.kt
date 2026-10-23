@@ -60,6 +60,7 @@ object CaptureTestTags {
     const val FILM_STRIP_SECTION_ROW = "capture_film_strip_sections"
 
     const val RAIL_AE = "capture_rail_ae"
+    const val RAIL_OIS = "capture_rail_ois"
     const val RAIL_METERING = "capture_rail_metering"
     const val RAIL_HIGHLIGHT = "capture_rail_highlight"
 

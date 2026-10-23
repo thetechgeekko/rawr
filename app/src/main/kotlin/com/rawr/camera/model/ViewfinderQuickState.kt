@@ -19,6 +19,9 @@ data class ViewfinderQuickState(
     val rawrAeEnabled: Boolean = false,
     val metering: RawrMetering = RawrMetering.Matrix,
     val highlight: HighlightQuickState = HighlightQuickState(),
+    /** Video mode shows OIS on the rail: gyro stabilization in post wants it off. */
+    val video: Boolean = false,
+    val oisEnabled: Boolean = true,
     /** Recording locks the rail like it locks the render profile. */
     val locked: Boolean = false
 )
@@ -44,6 +47,8 @@ internal fun SettingsValues.toViewfinderQuickState(): ViewfinderQuickState {
             threshold = if (isVideo) videoHighlightThreshold else photoHighlightThreshold,
             compression = if (isVideo) videoHighlightCompression else photoHighlightCompression,
             compressionDefault = compressionDefault
-        )
+        ),
+        video = isVideo,
+        oisEnabled = oisEnabledPreference
     )
 }

@@ -11,7 +11,8 @@
 
 namespace rawrcam::video {
 
-// Streaming ISO-BMFF / QuickTime writer for one HEVC track and one audio track.
+// Streaming ISO-BMFF / QuickTime writer for one HEVC track, one audio track and
+// an optional CAMM motion track (gyroscope/accelerometer).
 // Samples go straight into a 64-bit mdat as they arrive; finish() appends moov.
 // Unlike AMediaMuxer it can carry uncompressed PCM, and the same sample tables
 // serve both MP4 (AAC) and MOV (PCM) output. Disk writes run on a background
@@ -19,6 +20,18 @@ namespace rawrcam::video {
 class MovMuxer final {
 public:
     enum class Brand { Mp4, QuickTime };
+
+    // One Camera Motion Metadata packet (https://developers.google.com/streetview/publish/camm-spec):
+    // type 2 = gyroscope rad/s, type 3 = accelerometer m/s^2, both in camera axes
+    // (X right, Y down, Z forward in the coded image). Each packet is one 16-byte sample.
+    struct MotionPacket {
+        int64_t ptsUs = 0;
+        uint16_t type = 0;
+        float values[3] = {0.0f, 0.0f, 0.0f};
+    };
+    static constexpr uint16_t kCammGyro = 2;
+    static constexpr uint16_t kCammAccelerometer = 3;
+    static constexpr uint32_t kCammPacketBytes = 16;
 
     struct Video {
         // Encoder csd-0: Annex B VPS, SPS and PPS.
@@ -60,13 +73,20 @@ public:
 
     void setVideo(const Video& video);
     void setAudio(const Audio& audio);
+    // Adds the CAMM motion track. Optional; a file with no motion samples omits the track.
+    void setMotion();
     [[nodiscard]] bool hasVideo() const noexcept { return video_.present; }
     [[nodiscard]] bool hasAudio() const noexcept { return audio_.present; }
+    [[nodiscard]] bool hasMotion() const noexcept { return motion_.present; }
 
     // Annex B access unit; written length-prefixed. PTS in microseconds from the movie origin.
     void writeVideo(const uint8_t* data, size_t size, int64_t ptsUs, bool sync);
     // One AAC access unit, or any whole number of PCM frames.
     void writeAudio(const uint8_t* data, size_t size, int64_t ptsUs);
+    // CAMM packets in presentation order, written as one chunk. Packets earlier than the
+    // last written one, or before the movie origin, are dropped (CAMM needs monotonic PTS).
+    // Returns the number of packets kept.
+    size_t writeMotion(const MotionPacket* packets, size_t count);
     // Appends moov and fixes the mdat size. Throws on I/O failure or a missing track.
     void finish();
 
@@ -96,6 +116,7 @@ private:
     void indexRecord(uint8_t type, const std::vector<uint8_t>& payload);
     void noteVideo(uint64_t offset, uint32_t size, int64_t ptsUs, bool sync);
     void noteAudio(uint64_t offset, uint32_t size, int64_t ptsUs);
+    void noteMotion(uint64_t offset, const std::vector<int64_t>& ptsUs);
     // Hands staged data and its index records to the writer thread at a sample boundary.
     void flush();
     // Flushes when the staging buffer is full, at video sync samples, or 0.5 s after the
@@ -106,6 +127,7 @@ private:
     std::vector<uint8_t> moov() const;
     std::vector<uint8_t> videoTrak(uint32_t movieTimescale) const;
     std::vector<uint8_t> audioTrak(uint32_t movieTimescale) const;
+    std::vector<uint8_t> motionTrak(uint32_t movieTimescale) const;
 
     int fd_ = -1;
     Brand brand_;
@@ -113,6 +135,8 @@ private:
     Audio audioConfig_;
     Track video_;
     Track audio_;
+    Track motion_;
+    int64_t lastMotionPtsUs_ = -1;
     uint64_t mdatStart_ = 0;
     uint64_t position_ = 0;
     std::vector<uint8_t> buffer_;
