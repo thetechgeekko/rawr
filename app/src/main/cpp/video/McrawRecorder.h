@@ -20,8 +20,9 @@
 
 namespace rawrcam::video {
 
-// Writes the RAW frames of a video recording to a MotionCam .mcraw file next to
-// the HEVC file. The frame pipeline offers each recorded frame once its GPU work
+// Writes the RAW frames of a video recording, unprocessed (the sensor values as
+// delivered, losslessly compressed), to a MotionCam .mcraw file next to the HEVC
+// file, for grading from RAW. The frame pipeline offers each recorded frame once its GPU work
 // has retired; a copy thread reads the camera buffer into CPU memory and returns
 // the image to the camera quickly, worker threads compress, and one writer
 // thread appends frames in order together with the microphone audio and the IMU
@@ -36,6 +37,8 @@ class McrawRecorder final : public std::enable_shared_from_this<McrawRecorder> {
         std::string deviceModel;
         std::string software;
         int fps = 30;
+        // The stored region: the whole RAW buffer (default) or the video's framing.
+        McrawFraming framing = McrawFraming::FullSensor;
         uint32_t videoWidth = 0;
         uint32_t videoHeight = 0;
         // Expected microphone channels, for the container header written at the first

@@ -33,38 +33,35 @@ bool contains(const std::string& text, const std::string& part) { return text.fi
 
 int main() {
     using namespace rawrcam;
-    // --- Crop ---
+    using video::McrawFraming;
+    // --- Region: never resampled ---
     {
-        const auto uhd = video::mcrawCropFor(4000, 3000, 3840, 2160);
-        check(uhd.valid() && !uhd.binned && uhd.width == 3840 && uhd.height == 2160 && uhd.x == 80 && uhd.y == 420,
-              "4K from 4000x3000 is a centred sensor-resolution crop");
-        const auto hd = video::mcrawCropFor(4000, 3000, 1920, 1080);
-        check(hd.valid() && hd.binned && hd.width == 1920 && hd.height == 1080 && hd.x == 80 && hd.y == 420,
-              "1080p from 4000x3000 is binned from the 3840x2160 region");
-        const auto gate = video::mcrawCropFor(4000, 2998, 4000, 2998);
-        check(gate.valid() && !gate.binned && gate.width == 4000 && gate.height == 2996 && (gate.x | gate.y) % 2 == 0,
-              "open gate trims to whole 4-row tiles");
-        check(!video::mcrawCropFor(1920, 1080, 3840, 2160).valid(), "oversized video has no crop");
+        const auto full = video::mcrawCropFor(4000, 3000, McrawFraming::FullSensor);
+        check(full.valid() && full.x == 0 && full.y == 0 && full.width == 4000 && full.height == 3000,
+              "full frame is the whole RAW buffer");
+        const auto odd = video::mcrawCropFor(4000, 2998, McrawFraming::FullSensor);
+        check(odd.width == 4000 && odd.height == 2996, "full frame drops only the rows past whole 4-row tiles");
+        const auto uhd = video::mcrawCropFor(4000, 3000, McrawFraming::Video, 3840, 2160);
+        check(uhd.valid() && uhd.width == 3840 && uhd.height == 2160 && uhd.x == 80 && uhd.y == 420,
+              "4K video framing is a centred sensor-resolution crop");
+        const auto hd = video::mcrawCropFor(4000, 3000, McrawFraming::Video, 1920, 1080);
+        check(hd.valid() && hd.width == 3840 && hd.height == 2160 && hd.x == 80 && hd.y == 420,
+              "1080p video framing stores its 3840x2160 source region, unbinned");
+        check(!video::mcrawCropFor(1920, 1080, McrawFraming::Video, 3840, 2160).valid(), "oversized video has no crop");
     }
-    // --- Extraction keeps CFA phase; binning averages same-colour samples ---
+    // --- Extraction copies samples unchanged, keeping CFA phase ---
     {
         const uint32_t w = 16, h = 12;
         std::vector<uint16_t> raw(w * h);
         for (uint32_t y = 0; y < h; ++y)
             for (uint32_t x = 0; x < w; ++x) raw[y * w + x] = static_cast<uint16_t>(1000 * ((y & 1) * 2 + (x & 1)) + y * w + x);
-        McrawCrop crop{w, h, 2, 2, 8, 8, false};
+        McrawCrop crop{w, h, 2, 2, 8, 8};
         std::vector<uint16_t> out(64);
         video::extractMcrawFrame(raw.data(), w, crop, out.data());
-        check(out[0] == raw[2 * w + 2] && out[9] == raw[3 * w + 3], "crop copies from its origin");
-        McrawCrop bin{w, h, 0, 0, 4, 4, true};
-        std::vector<uint16_t> binned(16);
-        video::extractMcrawFrame(raw.data(), w, bin, binned.data());
-        bool phases = true;
-        for (uint32_t y = 0; y < 4; ++y)
-            for (uint32_t x = 0; x < 4; ++x) phases &= binned[y * 4 + x] / 1000 == (y & 1) * 2 + (x & 1);
-        check(phases, "binning keeps each sample's CFA colour");
-        const uint32_t expect = (raw[0] + raw[2] + raw[2 * w] + raw[2 * w + 2] + 2) / 4;
-        check(binned[0] == expect, "binned R averages the four R samples of its 4x4 block");
+        bool same = true;
+        for (uint32_t y = 0; y < 8; ++y)
+            for (uint32_t x = 0; x < 8; ++x) same &= out[y * 8 + x] == raw[(y + 2) * w + x + 2];
+        check(same, "crop copies every sample unchanged");
     }
 
     // --- Metadata JSON ---
@@ -82,13 +79,23 @@ int main() {
     camera->availableFocalLengthsMm = {6.9f};
     camera->availableApertures = {1.8f};
     video::McrawClipInfo clip{"vivo", "V2408A", "RAWR test", 30, 48000, 2};
-    const McrawCrop crop = video::mcrawCropFor(256, 64, 128, 32);
+    const McrawCrop crop = video::mcrawCropFor(256, 64, McrawFraming::FullSensor);
     const std::string container = video::mcrawContainerJson(*camera, crop, clip);
     check(contains(container, "\"sensorArrangment\":\"bggr\""), "CFA name");
     check(contains(container, "\"blackLevel\":[67,66,65,64]"), "black level in stored (BGGR) order");
     check(contains(container, "\"colorIlluminant1\":\"standarda\"") && contains(container, "\"colorIlluminant2\":\"d65\""),
           "illuminant names");
     check(!contains(container, "calibrationMatrix1"), "invalid matrices are omitted");
+    check(contains(container, "\"forwardMatrix2\":[0.699999988"), "a missing second forward matrix repeats the first");
+    check(contains(container, "\"disableShadingMap\":false"), "shading map in use");
+    {
+        auto single = *camera;
+        single.color.referenceIlluminant2 = -1;
+        single.color.colorTransform2 = {};
+        const std::string one = video::mcrawContainerJson(single, crop, clip);
+        check(contains(one, "\"colorIlluminant2\":\"standarda\"") && contains(one, "\"colorMatrix2\":[1,0,0,0,1,0,0,0,1]"),
+              "a single calibration is repeated for the second illuminant");
+    }
 
     metadata::FrameMetadataSnapshot frame;
     frame.cameraContext = camera;
@@ -107,17 +114,29 @@ int main() {
     check(contains(frameJson, "\"dynamicBlackLevel\":[66,65,64,63]"), "dynamic black level in stored order");
     check(contains(frameJson, "\"lensShadingMap\":[[1,1.00999999,"), "lens shading plane 0 is the R channel");
     check(contains(frameJson, "\"asShotNeutral\":[0.5,1,0.600000024]"), "neutral point");
+    check(contains(frameJson, "\"isBinned\":false"), "never binned");
+    {
+        auto corrected = std::make_shared<metadata::CameraContextMetadata>(*camera);
+        corrected->hasLensShadingApplied = true;
+        corrected->lensShadingApplied = true;
+        auto f = frame;
+        f.cameraContext = corrected;
+        check(!contains(video::mcrawFrameJson(f, 1, crop), "lensShadingMap"),
+              "no shading map when the RAW is already shading-corrected");
+        check(contains(video::mcrawContainerJson(*corrected, crop, clip), "\"disableShadingMap\":true"),
+              "container flags shading-corrected RAW");
+    }
 
 #ifdef RAWR_WITH_MOTIONCAM_DECODER
     {
         const auto c = nlohmann::json::parse(container);
         const auto f = nlohmann::json::parse(frameJson);
         check(c["extraData"]["audioChannels"] == 2 && c["whiteLevel"] == 1023, "container JSON parses");
-        check(f["width"] == 128 && f["height"] == 32 && f["compressionType"] == 7 && f["isBinned"] == true,
+        check(f["width"] == 256 && f["height"] == 64 && f["compressionType"] == 7 && f["isBinned"] == false,
               "frame JSON parses");
         check(f["lensShadingMap"].size() == 4 && f["lensShadingMap"][3].size() == 6, "lens shading planes");
 
-        // End to end: a binned clip from a 256x64 buffer decodes to the extracted pixels.
+        // End to end: a full-frame clip of a 256x64 buffer decodes to the very same samples.
         std::vector<uint16_t> raw(256 * 64);
         for (size_t i = 0; i < raw.size(); ++i) raw[i] = static_cast<uint16_t>(64 + (i * 7919) % 900);
         std::vector<uint16_t> stored(size_t(crop.width) * crop.height);
@@ -139,6 +158,7 @@ int main() {
         decoder.loadFrame(decoder.getFrames().at(0), pixels, metadata);
         check(pixels.size() == stored.size() * 2 && std::memcmp(pixels.data(), stored.data(), pixels.size()) == 0,
               "reference decoder returns the stored frame");
+        check(stored == raw, "full frame stores the RAW buffer unchanged");
         check(decoder.getContainerMetadata()["sensorArrangment"] == "bggr", "reference decoder reads container JSON");
         unlink(path.c_str());
         std::printf("reference decoder cross-check ran\n");

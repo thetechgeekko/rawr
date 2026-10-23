@@ -50,9 +50,9 @@ std::shared_ptr<McrawRecorder> McrawRecorder::active() {
 size_t McrawRecorder::recover(int fd) { return rawr::mcraw::ContainerWriter::recover(fd); }
 
 McrawRecorder::McrawRecorder(int fd, const Settings& settings) : fd_(fd), settings_(settings) {
-    if (settings_.videoWidth == 0 || settings_.videoHeight == 0) {
+    if (settings_.framing == McrawFraming::Video && (settings_.videoWidth == 0 || settings_.videoHeight == 0)) {
         ::close(fd_);
-        throw std::invalid_argument("MCRAW recording needs the video size");
+        throw std::invalid_argument("MCRAW video framing needs the video size");
     }
     const unsigned cores = std::max(2u, std::thread::hardware_concurrency());
     const int workers = settings_.workers > 0 ? settings_.workers : static_cast<int>(std::clamp(cores / 2, 2u, 4u));
@@ -84,7 +84,8 @@ bool McrawRecorder::offerFrame(imaging::RawFrameLease& lease, const metadata::Fr
             fail("unsupported: quad-Bayer RAW is remosaiced on the GPU only");
             return false;
         }
-        const McrawCrop crop = mcrawCropFor(rawWidth, rawHeight, settings_.videoWidth, settings_.videoHeight);
+        const McrawCrop crop =
+            mcrawCropFor(rawWidth, rawHeight, settings_.framing, settings_.videoWidth, settings_.videoHeight);
         if (!crop.valid()) {
             fail("unsupported: " + std::to_string(settings_.videoWidth) + "x" + std::to_string(settings_.videoHeight) +
                  " does not fit the " + std::to_string(rawWidth) + "x" + std::to_string(rawHeight) + " RAW stream");
@@ -92,8 +93,8 @@ bool McrawRecorder::offerFrame(imaging::RawFrameLease& lease, const metadata::Fr
         }
         crop_ = crop;
         camera_ = camera;
-        __android_log_print(ANDROID_LOG_INFO, kTag, "MCRAW_START raw=%ux%u stored=%ux%u at %u,%u binned=%d", rawWidth,
-                            rawHeight, crop.width, crop.height, crop.x, crop.y, crop.binned ? 1 : 0);
+        __android_log_print(ANDROID_LOG_INFO, kTag, "MCRAW_START raw=%ux%u stored=%ux%u at %u,%u", rawWidth, rawHeight,
+                            crop.width, crop.height, crop.x, crop.y);
     }
     if (rawWidth != crop_->rawWidth || rawHeight != crop_->rawHeight || metadata.cameraContext != camera_) {
         ++framesDropped_;  // The camera changed mid-recording; the clip keeps its first geometry.
@@ -339,14 +340,14 @@ std::string McrawRecorder::statsJson() const {
                   "{\"status\":\"%s\",\"complete\":%s,\"framesWritten\":%llu,\"framesDropped\":%llu,"
                   "\"framesFailed\":%llu,\"audioChunks\":%llu,\"motionSamples\":%llu,\"bytesWritten\":%llu,"
                   "\"inFlight\":%zu,\"averageFps\":%.3f,"
-                  "\"copyMsAvg\":%.2f,\"encodeMsAvg\":%.2f,\"width\":%u,\"height\":%u,\"binned\":%s}",
+                  "\"copyMsAvg\":%.2f,\"encodeMsAvg\":%.2f,\"width\":%u,\"height\":%u,\"fullFrame\":%s}",
                   status.c_str(), complete_ ? "true" : "false", static_cast<unsigned long long>(framesWritten_),
                   static_cast<unsigned long long>(framesDropped_), static_cast<unsigned long long>(framesFailed_),
                   static_cast<unsigned long long>(audioChunks_), static_cast<unsigned long long>(motionSamples_),
                   static_cast<unsigned long long>(bytesWritten_), inFlight_, fps,
                   framesWritten_ ? copyMsTotal_ / double(framesWritten_ + framesFailed_) : 0.0,
                   framesWritten_ ? encodeMsTotal_ / double(framesWritten_) : 0.0, crop_ ? crop_->width : 0u,
-                  crop_ ? crop_->height : 0u, crop_ && crop_->binned ? "true" : "false");
+                  crop_ ? crop_->height : 0u, settings_.framing == McrawFraming::FullSensor ? "true" : "false");
     return buffer;
 }
 

@@ -66,16 +66,18 @@ struct Run {
     std::string stats;
 };
 
-Run record(uint32_t videoWidth, uint32_t videoHeight, int frames, bool flood) {
+Run record(rawrcam::video::McrawFraming framing, uint32_t videoWidth, uint32_t videoHeight, int frames, bool flood) {
     using namespace rawrcam;
     Run run;
     const char* tmp = std::getenv("TMPDIR");
-    run.path = std::string(tmp ? tmp : "/tmp") + "/mcraw-recorder-" + std::to_string(videoWidth) + ".mcraw";
+    run.path = std::string(tmp ? tmp : "/tmp") + "/mcraw-recorder-" + std::to_string(videoWidth) + "-" +
+               std::to_string(frames) + ".mcraw";
     const int fd = open(run.path.c_str(), O_RDWR | O_CREAT | O_TRUNC, 0600);
     video::McrawRecorder::Settings settings;
     settings.deviceMake = "test";
     settings.deviceModel = "host";
     settings.software = "mcraw_recorder_test";
+    settings.framing = framing;
     settings.videoWidth = videoWidth;
     settings.videoHeight = videoHeight;
     settings.audioChannels = 2;
@@ -130,7 +132,7 @@ Run record(uint32_t videoWidth, uint32_t videoHeight, int frames, bool flood) {
     return run;
 }
 
-void verify(const Run& run, uint32_t width, uint32_t height, bool binned) {
+void verify(const Run& run, rawrcam::video::McrawFraming framing, uint32_t videoWidth, uint32_t videoHeight) {
     using namespace rawrcam;
     check(run.stats.find("\"complete\":true") != std::string::npos, "complete: " + run.stats);
     const std::string written = "\"framesWritten\":" + std::to_string(run.writtenIds.size()) + ",";
@@ -138,8 +140,8 @@ void verify(const Run& run, uint32_t width, uint32_t height, bool binned) {
 #ifdef RAWR_WITH_MOTIONCAM_DECODER
     motioncam::Decoder decoder(run.path);
     check(decoder.getFrames() == run.timestamps, "frames in offer order");
-    const video::McrawCrop crop = video::mcrawCropFor(kRawWidth, kRawHeight, width, height);
-    check(crop.binned == binned && crop.width == width, "crop");
+    const video::McrawCrop crop = video::mcrawCropFor(kRawWidth, kRawHeight, framing, videoWidth, videoHeight);
+    check(crop.valid(), "crop");
     std::vector<uint16_t> raw(size_t(kRawWidth) * kRawHeight), expected(size_t(crop.width) * crop.height);
     for (size_t f = 0; f < run.writtenIds.size(); ++f) {
         for (size_t i = 0; i < raw.size(); ++i) raw[i] = fakePixel(run.writtenIds[f], i);
@@ -149,7 +151,9 @@ void verify(const Run& run, uint32_t width, uint32_t height, bool binned) {
         decoder.loadFrame(run.timestamps[f], pixels, metadata);
         check(pixels.size() == expected.size() * 2 && std::memcmp(pixels.data(), expected.data(), pixels.size()) == 0,
               "frame " + std::to_string(f) + " pixels");
-        check(metadata["timestamp"] == run.timestamps[f] && metadata["isBinned"] == binned, "frame metadata");
+        check(metadata["timestamp"] == run.timestamps[f] && metadata["isBinned"] == false &&
+                  metadata["width"] == crop.width,
+              "frame metadata");
     }
     std::vector<motioncam::AudioChunk> audio;
     decoder.loadAudio(audio);
@@ -162,26 +166,27 @@ void verify(const Run& run, uint32_t width, uint32_t height, bool binned) {
     for (size_t i = 1; i < gyro.size(); ++i) ordered &= gyro[i - 1].timestampNs <= gyro[i].timestampNs;
     check(ordered, "gyro time-ordered");
 #else
-    (void)width;
-    (void)height;
-    (void)binned;
+    (void)framing;
+    (void)videoWidth;
+    (void)videoHeight;
 #endif
     unlink(run.path.c_str());
 }
 }  // namespace
 
 int main() {
-    // Paced like a camera: every frame is taken.
-    const Run paced = record(128, 48, 20, false);
+    using rawrcam::video::McrawFraming;
+    // Paced like a camera, full RAW frames: every frame is taken.
+    const Run paced = record(McrawFraming::FullSensor, 0, 0, 20, false);
     check(paced.writtenIds.size() == 20, "paced: all frames accepted (" + std::to_string(paced.writtenIds.size()) + ")");
-    verify(paced, 128, 48, true);
+    verify(paced, McrawFraming::FullSensor, 0, 0);
     // Offered faster than the copy thread drains: some are refused, none lost or reordered.
-    const Run flooded = record(64, 32, 60, true);
+    const Run flooded = record(McrawFraming::FullSensor, 0, 0, 60, true);
     check(!flooded.writtenIds.empty() && flooded.writtenIds.size() < 60, "flood: queue bound refuses frames");
-    verify(flooded, 64, 32, true);
-    // Unbinned: a crop that only fits at sensor resolution.
-    const Run cropped = record(200, 80, 8, false);
-    verify(cropped, 200, 80, false);
+    verify(flooded, McrawFraming::FullSensor, 0, 0);
+    // Video framing: the region the video records from, at sensor resolution.
+    const Run cropped = record(McrawFraming::Video, 200, 80, 8, false);
+    verify(cropped, McrawFraming::Video, 200, 80);
     // Every image the recorder took was released once; the test released the refused ones.
     const int total = 20 + 60 + 8;
     const int taken = int(paced.writtenIds.size() + flooded.writtenIds.size() + cropped.writtenIds.size());

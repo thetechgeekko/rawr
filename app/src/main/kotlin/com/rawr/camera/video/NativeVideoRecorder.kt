@@ -138,7 +138,9 @@ class NativeVideoRecorder(private val context: Context, private val preview: Raw
                         /** Gyroscope + accelerometer as a CAMM track (see [VideoEncoderConfig.embedGyro]). */
                         val embedGyro: Boolean = false,
                         /** A MotionCam .mcraw RAW clip beside the video (see [VideoEncoderConfig.recordMcraw]). */
-                        val recordMcraw: Boolean = false) {
+                        val recordMcraw: Boolean = false,
+                        /** MCRAW stores the whole RAW frame; false stores the video's framing. */
+                        val mcrawFullFrame: Boolean = true) {
         /** Rec.709 and AgX (video) write BT.709; other display profiles write sRGB. */
         val rec709: Boolean get() = renderProfileId == com.rawr.camera.settings.model.ColorRenderProfile.Rec709.nativeId ||
             renderProfileId == com.rawr.camera.settings.model.ColorRenderProfile.AGX_REC709_NATIVE_ID
@@ -214,7 +216,8 @@ class NativeVideoRecorder(private val context: Context, private val preview: Raw
                 val rawFd = requireNotNull(context.contentResolver.openFileDescriptor(requireNotNull(mcrawUri), "rw"))
                     .use { it.detachFd() }
                 mcrawHandle = mcrawEngine.nativeStart(rawFd, Build.MANUFACTURER.orEmpty(), Build.MODEL.orEmpty(),
-                    "RAWR ${BuildConfig.VERSION_NAME}", request.fps, request.width, request.height, request.audioChannels)
+                    "RAWR ${BuildConfig.VERSION_NAME}", request.fps, request.width, request.height, request.audioChannels,
+                    request.mcrawFullFrame)
                 check(mcrawHandle != 0L) { "MCRAW recorder did not start" }
             }
             handle = engine.nativeStart(fd, request.width, request.height, request.fps,

@@ -33,7 +33,7 @@ void throwJava(JNIEnv* env, const char* message) {
 // Takes ownership of fd, also on failure.
 extern "C" JNIEXPORT jlong JNICALL Java_com_rawr_camera_video_NativeMcrawEngine_nativeStart(
     JNIEnv* env, jobject, jint fd, jstring deviceMake, jstring deviceModel, jstring software, jint fps, jint width,
-    jint height, jint audioChannels) {
+    jint height, jint audioChannels, jboolean fullFrame) {
     try {
         McrawRecorder::Settings settings;
         settings.deviceMake = javaString(env, deviceMake);
@@ -43,6 +43,7 @@ extern "C" JNIEXPORT jlong JNICALL Java_com_rawr_camera_video_NativeMcrawEngine_
         settings.videoWidth = width > 0 ? static_cast<uint32_t>(width) : 0u;
         settings.videoHeight = height > 0 ? static_cast<uint32_t>(height) : 0u;
         settings.audioChannels = audioChannels;
+        settings.framing = fullFrame ? rawrcam::video::McrawFraming::FullSensor : rawrcam::video::McrawFraming::Video;
         auto recorder = McrawRecorder::start(fd, settings);  // owns fd from here
         return static_cast<jlong>(reinterpret_cast<intptr_t>(new std::shared_ptr<McrawRecorder>(std::move(recorder))));
     } catch (const std::exception& error) {

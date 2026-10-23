@@ -10,9 +10,12 @@ internal class NativeMcrawEngine {
         init { System.loadLibrary("rawrcam_native") }
     }
 
-    /** Takes ownership of [fd]. Throws when a recording is already active. */
+    /**
+     * Takes ownership of [fd]. Throws when a recording is already active. [fullFrame] stores the
+     * whole RAW buffer; otherwise the region the [width]x[height] video records from.
+     */
     external fun nativeStart(fd: Int, deviceMake: String, deviceModel: String, software: String, fps: Int,
-                             width: Int, height: Int, audioChannels: Int): Long
+                             width: Int, height: Int, audioChannels: Int, fullFrame: Boolean): Long
     external fun nativeStats(handle: Long): String
     /** Finishes the file and frees [handle]; returns the final stats JSON. */
     external fun nativeStop(handle: Long): String

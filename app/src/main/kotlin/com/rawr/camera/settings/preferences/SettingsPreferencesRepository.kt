@@ -672,7 +672,8 @@ class SettingsPreferencesRepository(context: Context, private val defaults: Sett
                 audioGainDb = p[Keys.videoAudioGainDb] ?: d.videoEncoder.audioGainDb,
                 audioLowCutHz = p[Keys.videoAudioLowCutHz] ?: d.videoEncoder.audioLowCutHz,
                 embedGyro = p[Keys.videoEmbedGyro] ?: d.videoEncoder.embedGyro,
-                recordMcraw = p[Keys.videoRecordMcraw] ?: d.videoEncoder.recordMcraw
+                recordMcraw = p[Keys.videoRecordMcraw] ?: d.videoEncoder.recordMcraw,
+                mcrawFullFrame = p[Keys.videoMcrawFullFrame] ?: d.videoEncoder.mcrawFullFrame
             ).sanitized(),
             photoLensShadingEnabled = p[Keys.photoLensShading] ?: p[Keys.lensShadingCorrection] ?: d.photoLensShadingEnabled,
             videoLensShadingEnabled = p[Keys.videoLensShading] ?: d.videoLensShadingEnabled,
@@ -918,6 +919,7 @@ class SettingsPreferencesRepository(context: Context, private val defaults: Sett
         p[Keys.videoAudioLowCutHz] = encoder.audioLowCutHz
         p[Keys.videoEmbedGyro] = encoder.embedGyro
         p[Keys.videoRecordMcraw] = encoder.recordMcraw
+        p[Keys.videoMcrawFullFrame] = encoder.mcrawFullFrame
         p[Keys.photoLensShading] = v.photoLensShadingEnabled
         p[Keys.videoLensShading] = v.videoLensShadingEnabled
         p[Keys.distortionCorrection] = v.distortionCorrectionEnabled
@@ -1212,6 +1214,7 @@ class SettingsPreferencesRepository(context: Context, private val defaults: Sett
         val videoAudioLowCutHz = intPreferencesKey("video_audio_low_cut_hz")
         val videoEmbedGyro = booleanPreferencesKey("video_embed_gyro")
         val videoRecordMcraw = booleanPreferencesKey("video_record_mcraw")
+        val videoMcrawFullFrame = booleanPreferencesKey("video_mcraw_full_frame")
         val photoLensShading = booleanPreferencesKey("photo_lens_shading")
         val videoLensShading = booleanPreferencesKey("video_lens_shading")
         val distortionCorrection = booleanPreferencesKey("distortion_correction")

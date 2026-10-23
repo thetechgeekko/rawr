@@ -121,43 +121,36 @@ void illuminant(Json& json, const char* name, int32_t code) {
 void matrix(Json& json, const char* name, const metadata::Matrix3x3& m) {
     if (m.valid) json.numbers(name, m.rowMajor);
 }
+
+// The camera's RAW output already has lens shading removed: no map to apply.
+bool shadingApplied(const metadata::CameraContextMetadata& camera) {
+    return camera.hasLensShadingApplied && camera.lensShadingApplied;
+}
 }  // namespace
 
-McrawCrop mcrawCropFor(uint32_t rawWidth, uint32_t rawHeight, uint32_t videoWidth, uint32_t videoHeight) {
+McrawCrop mcrawCropFor(uint32_t rawWidth, uint32_t rawHeight, McrawFraming framing, uint32_t videoWidth,
+                       uint32_t videoHeight) {
     McrawCrop crop;
-    const VideoSourceRect rect = videoSourceRect(rawWidth, rawHeight, videoWidth, videoHeight);
-    if (rect.width == 0 || rect.height == 0) return crop;
     crop.rawWidth = rawWidth;
     crop.rawHeight = rawHeight;
-    crop.x = rect.x;
-    crop.y = rect.y;
-    crop.binned = rect.reduceCfa;
-    crop.width = (crop.binned ? rect.width / 2 : rect.width) & ~1u;
-    crop.height = (crop.binned ? rect.height / 2 : rect.height) & ~3u;  // whole MCRAW tiles
+    uint32_t width = rawWidth, height = rawHeight;
+    if (framing == McrawFraming::Video) {
+        const VideoSourceRect rect = videoSourceRect(rawWidth, rawHeight, videoWidth, videoHeight);
+        if (rect.width == 0 || rect.height == 0) return McrawCrop{};
+        crop.x = rect.x;
+        crop.y = rect.y;
+        width = rect.width;
+        height = rect.height;
+    }
+    crop.width = width & ~1u;   // whole CFA pairs
+    crop.height = height & ~3u;  // whole MCRAW tiles
     if (crop.width < 2 || crop.height < 4) return McrawCrop{};
     return crop;
 }
 
 void extractMcrawFrame(const uint16_t* raw, size_t rawStridePixels, const McrawCrop& crop, uint16_t* out) noexcept {
-    if (!crop.binned) {
-        for (uint32_t y = 0; y < crop.height; ++y)
-            std::copy_n(raw + size_t(crop.y + y) * rawStridePixels + crop.x, crop.width, out + size_t(y) * crop.width);
-        return;
-    }
-    // Each output sample averages the four same-colour samples of a 4x4 source block:
-    // output (y, x) has CFA phase (y & 1, x & 1) and reads phase-matched rows and
-    // columns 0 and 2 apart, so the stored frame keeps the buffer's CFA order.
-    for (uint32_t y = 0; y < crop.height; ++y) {
-        const uint32_t sy = crop.y + 4 * (y >> 1) + (y & 1u);
-        const uint16_t* r0 = raw + size_t(sy) * rawStridePixels;
-        const uint16_t* r1 = r0 + 2 * rawStridePixels;
-        uint16_t* row = out + size_t(y) * crop.width;
-        for (uint32_t x = 0; x < crop.width; ++x) {
-            const uint32_t sx = crop.x + 4 * (x >> 1) + (x & 1u);
-            const uint32_t sum = uint32_t(r0[sx]) + r0[sx + 2] + r1[sx] + r1[sx + 2];
-            row[x] = static_cast<uint16_t>((sum + 2) >> 2);
-        }
-    }
+    for (uint32_t y = 0; y < crop.height; ++y)
+        std::copy_n(raw + size_t(crop.y + y) * rawStridePixels + crop.x, crop.width, out + size_t(y) * crop.width);
 }
 
 std::string mcrawContainerJson(const metadata::CameraContextMetadata& camera, const McrawCrop& crop,
@@ -168,20 +161,25 @@ std::string mcrawContainerJson(const metadata::CameraContextMetadata& camera, co
     json.num("whiteLevel", std::max(1.0f, camera.baselineWhiteLevel));
     json.str("sensorArrangment", arrangement(camera.rawPreviewCfa));
     json.integer("sensorOrientation", camera.geometry.sensorOrientationDegrees);
+    // A single reported calibration is repeated for the second illuminant: DNG
+    // converters expect two, and two identical ones mean no interpolation.
     const auto& color = camera.color;
+    const bool second = color.referenceIlluminant2 >= 0 && color.colorTransform2.valid;
     illuminant(json, "colorIlluminant1", color.referenceIlluminant1);
-    illuminant(json, "colorIlluminant2", color.referenceIlluminant2);
+    illuminant(json, "colorIlluminant2", second ? color.referenceIlluminant2 : color.referenceIlluminant1);
     matrix(json, "colorMatrix1", color.colorTransform1);
-    matrix(json, "colorMatrix2", color.colorTransform2);
+    matrix(json, "colorMatrix2", second ? color.colorTransform2 : color.colorTransform1);
     matrix(json, "forwardMatrix1", color.forwardMatrix1);
-    matrix(json, "forwardMatrix2", color.forwardMatrix2);
+    matrix(json, "forwardMatrix2", second && color.forwardMatrix2.valid ? color.forwardMatrix2 : color.forwardMatrix1);
     matrix(json, "calibrationMatrix1", color.calibrationTransform1);
-    matrix(json, "calibrationMatrix2", color.calibrationTransform2);
+    matrix(json, "calibrationMatrix2",
+           second && color.calibrationTransform2.valid ? color.calibrationTransform2 : color.calibrationTransform1);
     if (!camera.availableFocalLengthsMm.empty()) json.numbers("focalLengths", camera.availableFocalLengthsMm);
     if (!camera.availableApertures.empty()) json.numbers("apertures", camera.availableApertures);
     json.str("uniqueCameraModel", clip.deviceMake + " " + clip.deviceModel + " / camera " + camera.cameraId);
     Json profile;
     profile.str("cameraId", camera.cameraId).str("deviceModel", clip.deviceModel);
+    profile.boolean("disableShadingMap", shadingApplied(camera));
     json.raw("deviceSpecificProfile", profile.done());
     Json extra;
     if (clip.audioChannels > 0)
@@ -193,7 +191,6 @@ std::string mcrawContainerJson(const metadata::CameraContextMetadata& camera, co
         .integer("originalHeight", crop.rawHeight)
         .integer("cropX", crop.x)
         .integer("cropY", crop.y)
-        .boolean("binned", crop.binned)
         .boolean("timestampsRealtime", camera.sensorTimestampRealtime);
     json.raw("extraData", extra.done());
     return json.done();
@@ -205,7 +202,7 @@ std::string mcrawFrameJson(const metadata::FrameMetadataSnapshot& frame, int64_t
     json.integer("width", crop.width).integer("height", crop.height);
     json.integer("originalWidth", crop.rawWidth).integer("originalHeight", crop.rawHeight);
     json.integer("compressionType", 7).str("pixelFormat", "raw16");
-    json.boolean("isBinned", crop.binned).boolean("isCompressed", true).boolean("needRemosaic", false);
+    json.boolean("isBinned", false).boolean("isCompressed", true).boolean("needRemosaic", false);
     const uint32_t cfa = frame.cameraContext ? frame.cameraContext->rawPreviewCfa : 0;
     json.numbers("dynamicBlackLevel", geometry::reorderRggbByCode(frame.blackLevelPhysicalRggb, cfa));
     json.num("dynamicWhiteLevel", frame.effectiveWhiteLevel);
@@ -224,7 +221,8 @@ std::string mcrawFrameJson(const metadata::FrameMetadataSnapshot& frame, int64_t
     if (!neutral.empty()) json.numbers("asShotNeutral", neutral);
     json.integer("iso", frame.sensitivity).integer("exposureTime", frame.exposureTimeNs);
     const size_t points = size_t(frame.lensShadingMapWidth) * frame.lensShadingMapHeight;
-    if (points > 0 && frame.lensShadingMap.size() == points * 4) {
+    const bool applied = frame.cameraContext && shadingApplied(*frame.cameraContext);
+    if (!applied && points > 0 && frame.lensShadingMap.size() == points * 4) {
         json.integer("lensShadingMapWidth", frame.lensShadingMapWidth)
             .integer("lensShadingMapHeight", frame.lensShadingMapHeight);
         json.key("lensShadingMap");

@@ -100,7 +100,9 @@ data class VideoEncoderConfig(
     /** Gyroscope + accelerometer as a CAMM track, for gyro stabilization (e.g. Gyroflow). */
     val embedGyro: Boolean = true,
     /** A MotionCam .mcraw RAW clip (frames, audio, IMU) beside the HEVC video. */
-    val recordMcraw: Boolean = false
+    val recordMcraw: Boolean = false,
+    /** MCRAW stores the whole RAW frame; false stores only the video's framing (still unprocessed). */
+    val mcrawFullFrame: Boolean = true
 ) {
     fun sanitized(): VideoEncoderConfig = copy(
         bitDepth = if (bitDepth == 8) 8 else 10,

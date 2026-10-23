@@ -75,7 +75,8 @@ internal class CaptureRecordingBackend(
                     logProfile = imageSettings.videoLogProfile.takeIf { log },
                     renderProfileId = imageSettings.effectiveRenderProfileId(),
                     embedGyro = encoder.embedGyro,
-                    recordMcraw = encoder.recordMcraw))
+                    recordMcraw = encoder.recordMcraw,
+                    mcrawFullFrame = encoder.mcrawFullFrame))
                 recorder
             } catch (e: Exception) {
                 runCatching { recorder.close() }

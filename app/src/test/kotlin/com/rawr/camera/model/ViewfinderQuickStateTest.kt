@@ -27,4 +27,9 @@ class ViewfinderQuickStateTest {
         assertFalse(VideoEncoderConfig().recordMcraw)
         assertTrue(VideoEncoderConfig(recordMcraw = true).sanitized().recordMcraw)
     }
+
+    @Test fun mcrawStoresTheFullRawFrameByDefault() {
+        assertTrue(VideoEncoderConfig().mcrawFullFrame)
+        assertFalse(VideoEncoderConfig(mcrawFullFrame = false).sanitized().mcrawFullFrame)
+    }
 }
