@@ -213,6 +213,11 @@ void McrawRecorder::writeLoop() noexcept {
     std::vector<MotionSample> heldMotion;
     const auto writeSide = [&](std::deque<Audio>& audio, std::vector<MotionSample>& motion) {
         for (const Audio& chunk : audio) writer.writeAudio(chunk.bootNs, chunk.samples.data(), chunk.samples.size());
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            audioChunks_ += audio.size();
+            motionSamples_ += motion.size();
+        }
         for (const MotionSample& s : motion) {
             const rawr::mcraw::MotionSample sample{s.bootNs, s.device[0], s.device[1], s.device[2], 0};
             if (s.type == 2) writer.addGyro(sample);
@@ -329,13 +334,15 @@ std::string McrawRecorder::statsJson() const {
     const double fps = framesWritten_ > 1 && lastFrameNs_ > firstFrameNs_
                            ? (framesWritten_ - 1) * 1e9 / double(lastFrameNs_ - firstFrameNs_)
                            : 0.0;
-    char buffer[640];
+    char buffer[1024];
     std::snprintf(buffer, sizeof(buffer),
                   "{\"status\":\"%s\",\"complete\":%s,\"framesWritten\":%llu,\"framesDropped\":%llu,"
-                  "\"framesFailed\":%llu,\"bytesWritten\":%llu,\"inFlight\":%zu,\"averageFps\":%.3f,"
+                  "\"framesFailed\":%llu,\"audioChunks\":%llu,\"motionSamples\":%llu,\"bytesWritten\":%llu,"
+                  "\"inFlight\":%zu,\"averageFps\":%.3f,"
                   "\"copyMsAvg\":%.2f,\"encodeMsAvg\":%.2f,\"width\":%u,\"height\":%u,\"binned\":%s}",
                   status.c_str(), complete_ ? "true" : "false", static_cast<unsigned long long>(framesWritten_),
                   static_cast<unsigned long long>(framesDropped_), static_cast<unsigned long long>(framesFailed_),
+                  static_cast<unsigned long long>(audioChunks_), static_cast<unsigned long long>(motionSamples_),
                   static_cast<unsigned long long>(bytesWritten_), inFlight_, fps,
                   framesWritten_ ? copyMsTotal_ / double(framesWritten_ + framesFailed_) : 0.0,
                   framesWritten_ ? encodeMsTotal_ / double(framesWritten_) : 0.0, crop_ ? crop_->width : 0u,
