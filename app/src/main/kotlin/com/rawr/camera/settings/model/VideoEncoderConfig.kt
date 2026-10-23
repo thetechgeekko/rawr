@@ -98,7 +98,9 @@ data class VideoEncoderConfig(
     /** High-pass corner in Hz; 0 = off. */
     val audioLowCutHz: Int = 0,
     /** Gyroscope + accelerometer as a CAMM track, for gyro stabilization (e.g. Gyroflow). */
-    val embedGyro: Boolean = true
+    val embedGyro: Boolean = true,
+    /** A MotionCam .mcraw RAW clip (frames, audio, IMU) beside the HEVC video. */
+    val recordMcraw: Boolean = false
 ) {
     fun sanitized(): VideoEncoderConfig = copy(
         bitDepth = if (bitDepth == 8) 8 else 10,

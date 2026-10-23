@@ -116,6 +116,9 @@ cpp/
 │   ├── VideoProcessingResources.{h,cpp} # Cached processing images and engines
 │   ├── VideoRecorder.{h,cpp}          # Record video processing commands
 │   ├── NativeAvRecorder.{h,cpp}       # Android codec/muxer integration
+│   ├── MotionInput.{h,cpp}            # Gyroscope/accelerometer for the CAMM and MCRAW streams
+│   ├── McrawRecorder.{h,cpp}          # RAW frames + audio + IMU to a MotionCam .mcraw beside the video
+│   ├── McrawMetadata.{h,cpp}          # MCRAW crop/bin and container/frame JSON
 │   └── Mp4MetadataPatcher.{h,cpp}
 ├── presentation/
 │   ├── PresentationSurface.{h,cpp}    # Android window and Vulkan surface ownership

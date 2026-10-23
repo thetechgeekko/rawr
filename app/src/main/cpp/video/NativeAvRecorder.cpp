@@ -13,6 +13,7 @@
 #include <cstring>
 #include <stdexcept>
 
+#include "video/McrawRecorder.h"
 #include "video/Mp4MetadataPatcher.h"
 
 namespace rawrcam::video {
@@ -169,7 +170,8 @@ void NativeAvRecorder::start() {
         videoThread_ = std::thread([this] { drainVideo(); });
         audioInput_->setSink({[this](const AudioInput::Block& block) { onAudioBlock(block); },
                               [this](const std::string& error) { setFailure(error); }});
-        if (settings_.motion) startMotion();
+        // The IMU also feeds a RAW (MCRAW) recording that runs alongside, if any.
+        if (settings_.motion || McrawRecorder::active()) startMotion();
     } catch (...) {
         audioRunning_.store(false);
         stopRequested_.store(true);
@@ -183,7 +185,7 @@ void NativeAvRecorder::start() {
 // Motion is best effort: a missing or failing gyroscope never fails the recording.
 void NativeAvRecorder::startMotion() noexcept {
     try {
-        {
+        if (settings_.motion) {
             std::lock_guard<std::mutex> lock(muxerMutex_);
             muxer_->setMotion();
             motionWritable_ = true;
@@ -194,7 +196,7 @@ void NativeAvRecorder::startMotion() noexcept {
             config, [this](const std::vector<MotionSample>& samples) { onMotionSamples(samples); });
         const auto stats = motionInput_->stats();
         std::lock_guard<std::mutex> lock(statsMutex_);
-        motionStatus_ = "recording";
+        motionStatus_ = settings_.motion ? "recording" : "raw only";
         motionSensor_ = stats.gyroName;
         motionPeriodUs_ = stats.gyroPeriodUs;
     } catch (const std::exception& error) {
@@ -209,6 +211,7 @@ void NativeAvRecorder::startMotion() noexcept {
 }
 
 void NativeAvRecorder::onMotionSamples(const std::vector<MotionSample>& samples) noexcept {
+    if (const auto raw = McrawRecorder::active()) raw->addMotion(samples);  // device axes, as MCRAW stores them
     std::vector<MovMuxer::MotionPacket> packets;
     packets.reserve(samples.size());
     uint64_t gyro = 0, accelerometer = 0;
@@ -515,6 +518,8 @@ void NativeAvRecorder::onAudioBlock(const AudioInput::Block& block) {
             audioPeak_ = static_cast<int16_t>(std::min<int32_t>(32'767, std::max<int32_t>(audioPeak_, peak)));
             audioXruns_ = audioInput_->xruns();
         }
+        if (const auto raw = McrawRecorder::active())
+            raw->addAudio(block.firstFrameBootNs, pcm16.data(), static_cast<size_t>(block.frames), channels);
         if (settings_.audioPcmBits > 0) {
             // Samples are already little-endian on Android; 24-bit is packed above.
             const uint8_t* bytes = settings_.audioPcmBits == 24 ? packed.data()

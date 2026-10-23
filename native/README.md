@@ -49,4 +49,5 @@ Opposed, and every pipeline runs the selected one; see
 | `image_scopes`, `monitoring_overlays` | Scopes and exposure/focus overlays. |
 | `tinydng` | DNG writing (streaming writer, LosslessJPEG default) and reading. |
 | `zsl_codec`, `zsl_ring`, `zsl_container` | Zero-shutter-lag RAW compression and ring buffer. |
+| `mcraw` | MotionCam `.mcraw` RAW video: lossless codec (compression type 7) and container writer/recovery. |
 | `libjpeg-turbo` | Vendored JPEG codec. |

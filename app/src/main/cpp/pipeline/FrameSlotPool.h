@@ -44,6 +44,8 @@ struct FrameSlot {
     std::optional<rawrcam::color::FrameColorTransform> colorStateSnapshot;
     bool submitted = false;
     bool previewSubmitted = false;
+    // The frame went to the video encoder; on retirement it is offered as a RAW video frame.
+    bool videoRecorded = false;
 };
 
 class FrameSlotPool {

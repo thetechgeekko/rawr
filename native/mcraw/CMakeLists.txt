@@ -1,0 +1,5 @@
+add_library(mcraw STATIC src/McrawEncoder.cpp src/McrawContainer.cpp)
+add_library(rawr::mcraw ALIAS mcraw)
+target_include_directories(mcraw PUBLIC include)
+target_compile_features(mcraw PUBLIC cxx_std_17)
+target_compile_options(mcraw PRIVATE -Wall -Wextra -Wpedantic -Werror)

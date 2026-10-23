@@ -10,6 +10,7 @@
 #include <string>
 
 #include "color/FrameColorTransform.h"
+#include "imaging/RawFrameLease.h"
 #include "metadata/FrameMetadataSnapshot.h"
 
 namespace spektrafilm_native {
@@ -51,5 +52,11 @@ class FrameCapturePort {
                                      const spektrafilm_native::FilmLook& filmLook) = 0;
     virtual bool beginDeferredSnapshot(AImage* imageLease, AHardwareBuffer* ahb, std::uint64_t timestampNs,
                                        int acquireFenceFd = -1) = 0;
+    // A retired frame that was recorded to video, offered to a RAW video recording
+    // (MCRAW). Takes the image (moving it out of lease) and returns true when used.
+    virtual bool offerRawVideoFrame(imaging::RawFrameLease& /*lease*/, const metadata::FrameMetadataSnapshot& /*metadata*/,
+                                    uint32_t /*rawWidth*/, uint32_t /*rawHeight*/) {
+        return false;
+    }
 };
 }  // namespace rawrcam::pipeline

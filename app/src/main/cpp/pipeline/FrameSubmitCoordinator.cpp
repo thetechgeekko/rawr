@@ -637,6 +637,7 @@ void FrameSubmitCoordinator::submitSplitVideoAndMonitor(const SubmitParams& para
     slot->timestampNs = params.timestampNs;
     slot->metadataSnapshot = metadata;
     slot->colorStateSnapshot = *params.colorState;
+    slot->videoRecorded = true;
     performanceTracker_.recordSubmitted();
 
     VkResult videoPresent;
@@ -1175,6 +1176,11 @@ void FrameSubmitCoordinator::retireSlot(uint32_t slotIndex, pipeline::FrameSlot&
             capturePort_.beginDeferredSnapshot(slot.imageLease.image(), completedAhb, slot.timestampNs)) {
             (void)slot.imageLease.release();  // The capture worker now owns the image.
         }
+        // A frame recorded to video also goes to a RAW video recording, if one runs;
+        // it takes the image from the lease when it accepts the frame.
+        if (slot.imageLease && slot.videoRecorded && slot.metadataSnapshot)
+            (void)capturePort_.offerRawVideoFrame(slot.imageLease, *slot.metadataSnapshot, config_.rawWidth,
+                                                  config_.rawHeight);
         trace.record(rawrcam::diagnostics::RuntimeTraceStage::ImageRelease, slot.timestampNs, frameOrdinal,
                      static_cast<int32_t>(slotIndex));
         slot.imageLease.reset();
@@ -1182,6 +1188,7 @@ void FrameSubmitCoordinator::retireSlot(uint32_t slotIndex, pipeline::FrameSlot&
     slot.metadataSnapshot.reset();
     slot.colorStateSnapshot.reset();
     slot.submitted = false;
+    slot.videoRecorded = false;
     trace.record(rawrcam::diagnostics::RuntimeTraceStage::FrameRetired, slot.timestampNs, frameOrdinal,
                  static_cast<int32_t>(slotIndex));
 }

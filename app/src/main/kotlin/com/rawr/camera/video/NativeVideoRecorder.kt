@@ -56,6 +56,7 @@ class NativeVideoRecorder(private val context: Context, private val preview: Raw
                     val lastEvent = JSONObject(last).optString("event")
                     if (lastEvent == "published" || lastEvent == "recovered") return@runCatching
                     val start = JSONObject(first)
+                    recoverMcraw(context, journal, start)
                     val uri = start.getString("uri").toUri()
                     if (!hasVideoAndAudio(context, uri)) {
                         check(index.exists()) { "unplayable and no sample index" }
@@ -73,6 +74,20 @@ class NativeVideoRecorder(private val context: Context, private val preview: Raw
                 if (JSONObject(journal.readLines().lastOrNull { it.isNotBlank() } ?: "{}").optString("event") in
                     setOf("published", "recovered")) index.delete()
             }
+        }
+
+        /** An .mcraw cut off mid-take gets its index rebuilt from what reached the file, then is published. */
+        private fun recoverMcraw(context: Context, journal: File, start: JSONObject) {
+            val raw = start.optString("mcrawUri").takeIf { it.isNotEmpty() && it != "null" } ?: return
+            if (journal.readLines().any { it.contains("\"event\":\"mcraw\"") }) return  // finished normally
+            runCatching {
+                val uri = raw.toUri()
+                val fd = requireNotNull(context.contentResolver.openFileDescriptor(uri, "rw")).use { it.detachFd() }
+                val frames = NativeMcrawEngine().nativeRecover(fd)
+                VideoOutputStore(context).publish(uri)
+                journal.appendText(JSONObject().put("event", "mcraw").put("result",
+                    JSONObject().put("recovered", true).put("framesWritten", frames)).toString() + "\n")
+            }.onFailure { android.util.Log.w("RawrVideo", "Could not recover MCRAW of ${journal.name}", it) }
         }
 
         private fun hasVideoAndAudio(context: Context, uri: android.net.Uri): Boolean {
@@ -121,13 +136,18 @@ class NativeVideoRecorder(private val context: Context, private val preview: Raw
                         val timestampPolicy: VideoTimestampPolicy = VideoTimestampPolicy.REALTIME,
                         val saveLocationId: String = "storage.dcim_camera",
                         /** Gyroscope + accelerometer as a CAMM track (see [VideoEncoderConfig.embedGyro]). */
-                        val embedGyro: Boolean = false) {
+                        val embedGyro: Boolean = false,
+                        /** A MotionCam .mcraw RAW clip beside the video (see [VideoEncoderConfig.recordMcraw]). */
+                        val recordMcraw: Boolean = false) {
         /** Rec.709 and AgX (video) write BT.709; other display profiles write sRGB. */
         val rec709: Boolean get() = renderProfileId == com.rawr.camera.settings.model.ColorRenderProfile.Rec709.nativeId ||
             renderProfileId == com.rawr.camera.settings.model.ColorRenderProfile.AGX_REC709_NATIVE_ID
     }
 
     private val engine = NativeAvEngine()
+    private val mcrawEngine = NativeMcrawEngine()
+    private var mcrawHandle = 0L
+    private var mcrawUri: Uri? = null
     private val outputStore = VideoOutputStore(context)
     private var handle = 0L
     private var surface: Surface? = null
@@ -172,6 +192,7 @@ class NativeVideoRecorder(private val context: Context, private val preview: Raw
         val capturedAt = System.currentTimeMillis()
         val displayName = CaptureFileNames.baseName(capturedAt) + if (request.audioPcmBits > 0) ".mov" else ".mp4"
         uri = null
+        mcrawUri = null
         journal = null
         try {
             check(preview.beginVideoFps(request.fps)) { "RAW camera could not lock ${request.fps} fps" }
@@ -186,6 +207,16 @@ class NativeVideoRecorder(private val context: Context, private val preview: Raw
             index = File(context.filesDir, "$stem.idx")
             metadataGamut = request.logProfile?.gamut?.label ?: "Rec.709 / sRGB"
             metadataTransfer = request.logProfile?.transfer?.label ?: if (request.rec709) "BT.709" else "sRGB"
+            // Before the HEVC recorder: it forwards the microphone and IMU to an active MCRAW recording.
+            if (request.recordMcraw) {
+                mcrawUri = outputStore.createRaw(request.saveLocationId,
+                    CaptureFileNames.baseName(capturedAt) + ".mcraw", capturedAt)
+                val rawFd = requireNotNull(context.contentResolver.openFileDescriptor(requireNotNull(mcrawUri), "rw"))
+                    .use { it.detachFd() }
+                mcrawHandle = mcrawEngine.nativeStart(rawFd, Build.MANUFACTURER.orEmpty(), Build.MODEL.orEmpty(),
+                    "RAWR ${BuildConfig.VERSION_NAME}", request.fps, request.width, request.height, request.audioChannels)
+                check(mcrawHandle != 0L) { "MCRAW recorder did not start" }
+            }
             handle = engine.nativeStart(fd, request.width, request.height, request.fps,
                 request.bitrate, request.intraFrames, rotation, request.bitrateMode, request.maxBFrames,
                 request.audioChannels, request.audioBitrate, request.audio.preset, request.audio.deviceId(context),
@@ -218,6 +249,7 @@ class NativeVideoRecorder(private val context: Context, private val preview: Raw
                 .put("transfer", request.logProfile?.transfer?.name ?: if (request.rec709) "Rec709" else "SRgb")
                 .put("timestampPolicy", request.timestampPolicy.name)
                 .put("embedGyro", embedGyro).put("sensorMountDegrees", sensorMount).put("frontFacing", frontFacing)
+                .put("mcrawUri", mcrawUri?.toString())
                 .put("metadataGamut", metadataGamut).put("metadataTransfer", metadataTransfer)
                 .put("processing", preview.videoImageSettingsSnapshot()?.toJson()))
         } catch (error: Throwable) {
@@ -229,8 +261,11 @@ class NativeVideoRecorder(private val context: Context, private val preview: Raw
                 runCatching { engine.nativeStop(handle) }
                 handle = 0L
             }
+            stopMcraw()
             uri?.let { runCatching { outputStore.delete(it) } }
             uri = null
+            mcrawUri?.let { runCatching { outputStore.delete(it) } }
+            mcrawUri = null
             index?.delete()
             throw error
         }
@@ -257,6 +292,7 @@ class NativeVideoRecorder(private val context: Context, private val preview: Raw
         }
         gpu.put("mode", settings.mode)
         gpu.put("timestampPolicy", settings.timestampPolicy.name)
+        if (mcrawHandle != 0L) gpu.put("mcraw", JSONObject(mcrawEngine.nativeStats(mcrawHandle)))
         return gpu
     }
 
@@ -283,6 +319,7 @@ class NativeVideoRecorder(private val context: Context, private val preview: Raw
             check(detached) { "Could not detach video surface" }
             check(result.optBoolean("ok")) { "Native recording failed: ${result.optJSONObject("stats")?.optString("failure")}" }
             uri?.let(outputStore::publish)
+            finishMcraw()
             append(JSONObject().put("event", "published"))
             index?.delete()
         } catch (error: Throwable) {
@@ -293,11 +330,41 @@ class NativeVideoRecorder(private val context: Context, private val preview: Raw
                 runCatching { engine.nativeStop(handle) }
                 handle = 0L
             }
+            // On an HEVC failure the RAW clip is still finished and kept.
+            if (mcrawHandle != 0L) runCatching { finishMcraw() }
             runCatching { preview.endVideoFps() }
             surface?.release()
             surface = null
         }
         if (failure != null) throw requireNotNull(failure)
+    }
+
+    /** Stops the MCRAW writer, if running, and returns its final stats. */
+    private fun stopMcraw(): JSONObject? {
+        val active = mcrawHandle
+        if (active == 0L) return null
+        mcrawHandle = 0L  // nativeStop frees it
+        return runCatching { JSONObject(mcrawEngine.nativeStop(active)) }.getOrNull()
+    }
+
+    /** Finishes the RAW clip: published when it holds frames, removed when it holds none. */
+    private fun finishMcraw() {
+        val result = stopMcraw() ?: return
+        append(JSONObject().put("event", "mcraw").put("result", result))
+        val target = mcrawUri ?: return
+        mcrawUri = null
+        if (result.optBoolean("complete")) {
+            outputStore.publish(target)
+        } else if (result.optLong("framesWritten") > 0) {
+            // A write error left the file without its index: rebuild it from what was written.
+            runCatching {
+                val fd = requireNotNull(context.contentResolver.openFileDescriptor(target, "rw")).use { it.detachFd() }
+                mcrawEngine.nativeRecover(fd)
+                outputStore.publish(target)
+            }.onFailure { runCatching { outputStore.delete(target) } }
+        } else {
+            runCatching { outputStore.delete(target) }
+        }
     }
 
     private fun append(event: JSONObject) { journal?.appendText(event.toString() + "\n") }

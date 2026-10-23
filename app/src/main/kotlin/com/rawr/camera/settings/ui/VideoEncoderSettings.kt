@@ -148,5 +148,18 @@ internal fun VideoEncoderSettings(state: SettingsUiState, dispatch: SettingsDisp
                 testTag = SettingsTestTags.row("VideoEncoder", "embed_gyro")
             ) { set(encoder.copy(embedGyro = it)) }
         }
+        SettingsGroup(
+            title = "RAW video",
+            description = "Also writes the recorded RAW frames, audio and motion data to a MotionCam .mcraw file " +
+                "next to the video. 1080p is stored 2×2 binned; 4K and Open Gate at sensor resolution. " +
+                "Expect hundreds of MB per second at 4K: fast storage is required, and frames the storage " +
+                "cannot keep up with are skipped. Quad-Bayer sensors are not supported yet."
+        ) {
+            SettingsSwitchRow(
+                title = "Record MCRAW",
+                checked = encoder.recordMcraw,
+                testTag = SettingsTestTags.row("VideoEncoder", "record_mcraw")
+            ) { set(encoder.copy(recordMcraw = it)) }
+        }
     }
 }

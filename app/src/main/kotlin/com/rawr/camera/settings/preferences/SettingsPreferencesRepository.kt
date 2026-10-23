@@ -671,7 +671,8 @@ class SettingsPreferencesRepository(context: Context, private val defaults: Sett
                 audioRoute = p[Keys.videoAudioRoute]?.let(VideoAudioRoute::of) ?: d.videoEncoder.audioRoute,
                 audioGainDb = p[Keys.videoAudioGainDb] ?: d.videoEncoder.audioGainDb,
                 audioLowCutHz = p[Keys.videoAudioLowCutHz] ?: d.videoEncoder.audioLowCutHz,
-                embedGyro = p[Keys.videoEmbedGyro] ?: d.videoEncoder.embedGyro
+                embedGyro = p[Keys.videoEmbedGyro] ?: d.videoEncoder.embedGyro,
+                recordMcraw = p[Keys.videoRecordMcraw] ?: d.videoEncoder.recordMcraw
             ).sanitized(),
             photoLensShadingEnabled = p[Keys.photoLensShading] ?: p[Keys.lensShadingCorrection] ?: d.photoLensShadingEnabled,
             videoLensShadingEnabled = p[Keys.videoLensShading] ?: d.videoLensShadingEnabled,
@@ -916,6 +917,7 @@ class SettingsPreferencesRepository(context: Context, private val defaults: Sett
         p[Keys.videoAudioGainDb] = encoder.audioGainDb
         p[Keys.videoAudioLowCutHz] = encoder.audioLowCutHz
         p[Keys.videoEmbedGyro] = encoder.embedGyro
+        p[Keys.videoRecordMcraw] = encoder.recordMcraw
         p[Keys.photoLensShading] = v.photoLensShadingEnabled
         p[Keys.videoLensShading] = v.videoLensShadingEnabled
         p[Keys.distortionCorrection] = v.distortionCorrectionEnabled
@@ -1209,6 +1211,7 @@ class SettingsPreferencesRepository(context: Context, private val defaults: Sett
         val videoAudioGainDb = intPreferencesKey("video_audio_gain_db")
         val videoAudioLowCutHz = intPreferencesKey("video_audio_low_cut_hz")
         val videoEmbedGyro = booleanPreferencesKey("video_embed_gyro")
+        val videoRecordMcraw = booleanPreferencesKey("video_record_mcraw")
         val photoLensShading = booleanPreferencesKey("photo_lens_shading")
         val videoLensShading = booleanPreferencesKey("video_lens_shading")
         val distortionCorrection = booleanPreferencesKey("distortion_correction")
