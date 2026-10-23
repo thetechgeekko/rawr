@@ -22,4 +22,14 @@ class ViewfinderQuickStateTest {
         assertTrue(VideoEncoderConfig().embedGyro)
         assertFalse(VideoEncoderConfig(embedGyro = false).sanitized().embedGyro)
     }
+
+    @Test fun mcrawRecordingIsOptInAndSurvivesSanitizing() {
+        assertFalse(VideoEncoderConfig().recordMcraw)
+        assertTrue(VideoEncoderConfig(recordMcraw = true).sanitized().recordMcraw)
+    }
+
+    @Test fun mcrawStoresTheFullRawFrameByDefault() {
+        assertTrue(VideoEncoderConfig().mcrawFullFrame)
+        assertFalse(VideoEncoderConfig(mcrawFullFrame = false).sanitized().mcrawFullFrame)
+    }
 }

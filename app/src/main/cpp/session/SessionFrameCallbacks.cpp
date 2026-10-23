@@ -13,6 +13,7 @@
 #include "image_scopes/types.h"
 #include "session/SessionEngine.h"
 #include "tonemap/TonemapMath.h"
+#include "video/McrawRecorder.h"
 
 namespace rawrcam::session {
 
@@ -367,6 +368,13 @@ bool SessionFrameCallbacks::beginDeferredSnapshot(AImage* imageLease, AHardwareB
                                                   int acquireFenceFd) {
     if (engine_->fullSizeStillClaimed(timestampNs)) return engine_->snapshotFullSizeStill(imageLease, timestampNs);
     return engine_->capture_.single().beginDeferredSnapshot(imageLease, ahb, timestampNs, acquireFenceFd);
+}
+
+bool SessionFrameCallbacks::offerRawVideoFrame(imaging::RawFrameLease& lease,
+                                               const metadata::FrameMetadataSnapshot& metadata, uint32_t rawWidth,
+                                               uint32_t rawHeight) {
+    const auto recorder = video::McrawRecorder::active();
+    return recorder && recorder->offerFrame(lease, metadata, rawWidth, rawHeight);
 }
 
 void SessionFrameCallbacks::discardScopesSlot(std::uint32_t slotIndex) {

@@ -37,6 +37,8 @@ class SessionFrameCallbacks final : public pipeline::FrameLifecyclePort,
                              const spektrafilm_native::FilmLook& filmLook) override;
     bool beginDeferredSnapshot(AImage* imageLease, AHardwareBuffer* ahb, std::uint64_t timestampNs,
                                int acquireFenceFd = -1) override;
+    bool offerRawVideoFrame(imaging::RawFrameLease& lease, const metadata::FrameMetadataSnapshot& metadata,
+                            uint32_t rawWidth, uint32_t rawHeight) override;
     void discardScopesSlot(std::uint32_t slotIndex) override;
     void retireScopesSlot(std::uint32_t slotIndex) override;
     std::optional<RenderedFeedback> consumeExposureFeedback(std::uint32_t slotIndex) override;

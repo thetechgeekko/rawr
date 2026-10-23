@@ -148,5 +148,29 @@ internal fun VideoEncoderSettings(state: SettingsUiState, dispatch: SettingsDisp
                 testTag = SettingsTestTags.row("VideoEncoder", "embed_gyro")
             ) { set(encoder.copy(embedGyro = it)) }
         }
+        SettingsGroup(
+            title = "RAW video",
+            description = "Also writes every recorded frame as unprocessed RAW (sensor values as captured, " +
+                "losslessly compressed) to a MotionCam .mcraw file next to the video, with the colour " +
+                "calibration, black/white levels, white balance, lens shading map, audio and motion data, " +
+                "for grading in DaVinci Resolve and similar. Expect hundreds of MB per second: fast storage " +
+                "is required, and frames the storage cannot keep up with are skipped. Quad-Bayer sensors " +
+                "are not supported yet."
+        ) {
+            SettingsSwitchRow(
+                title = "Record MCRAW",
+                checked = encoder.recordMcraw,
+                testTag = SettingsTestTags.row("VideoEncoder", "record_mcraw")
+            ) { set(encoder.copy(recordMcraw = it)) }
+            SettingDivider()
+            SettingsSwitchRow(
+                title = "Full sensor frame",
+                checked = encoder.mcrawFullFrame,
+                supportingText = if (encoder.mcrawFullFrame) "Whole RAW frame, as captured"
+                else "Only the video's framing, at sensor resolution",
+                enabled = encoder.recordMcraw,
+                testTag = SettingsTestTags.row("VideoEncoder", "mcraw_full_frame")
+            ) { set(encoder.copy(mcrawFullFrame = it)) }
+        }
     }
 }

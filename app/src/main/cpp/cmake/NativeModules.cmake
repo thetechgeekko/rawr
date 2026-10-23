@@ -178,6 +178,8 @@ rawrcam_module(video
     video/VideoSession.cpp
     video/AudioInput.cpp
     video/MotionInput.cpp
+    video/McrawMetadata.cpp
+    video/McrawRecorder.cpp
     video/MovMuxer.cpp
     video/NativeAvRecorder.cpp
     video/Mp4MetadataPatcher.cpp

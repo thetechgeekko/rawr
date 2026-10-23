@@ -161,6 +161,36 @@ rawr_test(dng_capture_test native/dng_capture_test.cpp
   "${APP}/color/DcpProfile.cpp"
   "${APP}/color/ColorMath.cpp")
 target_link_libraries(dng_capture_test PRIVATE rawr_tinydng)
+add_subdirectory("${RAWR_ROOT}/native/mcraw" "${CMAKE_CURRENT_BINARY_DIR}/mcraw")
+rawr_test(mcraw_test
+  "${RAWR_ROOT}/tests/native/mcraw_test.cpp")
+target_link_libraries(mcraw_test PRIVATE rawr::mcraw)
+rawr_test(mcraw_metadata_test
+  "${RAWR_ROOT}/tests/native/mcraw_metadata_test.cpp"
+  "${APP}/video/McrawMetadata.cpp")
+target_link_libraries(mcraw_metadata_test PRIVATE rawr::mcraw)
+rawr_test(mcraw_recorder_test
+  "${RAWR_ROOT}/tests/native/mcraw_recorder_test.cpp"
+  "${APP}/video/McrawRecorder.cpp"
+  "${APP}/video/McrawMetadata.cpp")
+target_link_libraries(mcraw_recorder_test PRIVATE rawr::mcraw)
+target_include_directories(mcraw_recorder_test BEFORE PRIVATE
+  "${CMAKE_CURRENT_SOURCE_DIR}/native/mcraw_stubs" "${CMAKE_CURRENT_SOURCE_DIR}/native/ownership_stubs")
+# Optional cross-check against MotionCam's Apache-2.0 reference decoder:
+# -DRAWR_MOTIONCAM_DECODER_DIR=<checkout of github.com/mirsadm/motioncam-decoder>
+set(RAWR_MOTIONCAM_DECODER_DIR "" CACHE PATH "motioncam-decoder checkout for the MCRAW cross-check")
+if(RAWR_MOTIONCAM_DECODER_DIR)
+  add_library(motioncam_reference_decoder STATIC
+    "${RAWR_MOTIONCAM_DECODER_DIR}/lib/Decoder.cpp"
+    "${RAWR_MOTIONCAM_DECODER_DIR}/lib/RawData.cpp"
+    "${RAWR_MOTIONCAM_DECODER_DIR}/lib/RawData_Legacy.cpp")
+  target_include_directories(motioncam_reference_decoder SYSTEM PUBLIC
+    "${RAWR_MOTIONCAM_DECODER_DIR}/lib/include" "${RAWR_MOTIONCAM_DECODER_DIR}/thirdparty")
+  foreach(test mcraw_test mcraw_metadata_test mcraw_recorder_test)
+    target_link_libraries(${test} PRIVATE motioncam_reference_decoder)
+    target_compile_definitions(${test} PRIVATE RAWR_WITH_MOTIONCAM_DECODER=1)
+  endforeach()
+endif()
 rawr_test(motion_axes_test
   "${RAWR_ROOT}/tests/native/motion_axes_test.cpp")
 add_executable(hevc_metadata_helper native/hevc_log_metadata_test.cpp "${APP}/video/HevcLogMetadata.cpp")
