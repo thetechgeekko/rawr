@@ -40,7 +40,13 @@ jobs:
         run: ./gradlew :app:testDebugUnitTest
 
       - name: Assemble debug APK
-        run: ./gradlew :app:assembleDebug
+        run: |
+          set -o pipefail
+          ./gradlew :app:assembleDebug 2>&1 | tee assemble.log || {
+            grep -nE "error:|error G|FAILED:|undefined reference|ld.lld: error|CMake Error|What went wrong" assemble.log \
+              | head -40 | while IFS= read -r line; do echo "::error::${line:0:900}"; done
+            exit 1
+          }
 
       - uses: actions/upload-artifact@v4
         with:
